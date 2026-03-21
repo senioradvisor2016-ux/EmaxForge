@@ -35,6 +35,7 @@ from cli_anything.emaxforge.handlers.bulk_import import bulk_import, collect_eb2
 from cli_anything.emaxforge.handlers.bank_mover import move_bank
 from cli_anything.emaxforge.handlers.disk_repair import repair_disk, format_repair_report
 from cli_anything.emaxforge.handlers.bank_renamer import rename_bank
+from cli_anything.emaxforge.handlers.sample_extractor import extract_samples
 
 
 @click.group()
@@ -291,6 +292,73 @@ def move_bank_cmd(src_path, dst_path, bank_name, dst_bank_name, mode, output_jso
     except Exception as e:
         if output_json:
             click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("extract-samples")
+@click.option('--bank', 'source_path', type=click.Path(exists=True), required=True,
+              help='EB2 bank file OR .hda disk image')
+@click.option('--output-dir', required=True, help='Directory to write audio files')
+@click.option('--slot', type=int, default=None,
+              help='Bank slot number (required when --bank is a .hda disk)')
+@click.option('--format', 'fmt', type=click.Choice(['wav', 'aiff'], case_sensitive=False),
+              default='wav', show_default=True, help='Output audio format')
+@click.option('--normalize', is_flag=True, help='Normalize audio to full dynamic range')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def extract_samples_cmd(source_path, output_dir, slot, fmt, normalize, output_json):
+    """Extract individual samples from an EMAX II bank as WAV or AIFF.
+
+    \b
+    Works with standalone .EB2 bank files or directly from a .hda disk image.
+    Samples are written as numbered WAV/AIFF files in the output directory.
+
+    Examples:
+      # From EB2 file
+      cli-anything-emaxforge extract-samples \\
+        --bank STEEL_DRUMS.EB2 --output-dir ~/Desktop/STEEL_DRUMS/
+
+      # From disk image (slot 1)
+      cli-anything-emaxforge extract-samples \\
+        --bank HD10.hda --slot 1 --output-dir ~/Desktop/samples/
+
+      # AIFF + normalize
+      cli-anything-emaxforge extract-samples \\
+        --bank STEEL_DRUMS.EB2 --output-dir ~/Desktop/out/ --format aiff --normalize
+    """
+    try:
+        result = extract_samples(
+            source_path=source_path,
+            output_dir=output_dir,
+            fmt=fmt,
+            normalize=normalize,
+            slot=slot,
+        )
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+            return
+
+        if not result.get('success'):
+            click.echo(f"❌ {result.get('error')}", err=True)
+            sys.exit(1)
+
+        files = result.get('files', [])
+        click.echo(f"✅ Extracted {len(files)} sample(s) from \"{result.get('bank_name')}\"")
+        click.echo(f"   Format: {result.get('format')} | Output: {result.get('output_dir')}")
+        click.echo()
+        for f in files:
+            dur = f.get('duration', 0)
+            rate = f.get('sample_rate', 0)
+            kb = f.get('size_bytes', 0) // 1024
+            click.echo(f"   [{f.get('name'):<20s}] {dur:.2f}s  {rate} Hz  {kb} KB")
+
+        click.echo(f"\n   Total: {len(files)} file(s) | {result.get('elapsed_ms')} ms")
+
+    except Exception as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
         else:
             click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)
