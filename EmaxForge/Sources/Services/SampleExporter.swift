@@ -310,4 +310,77 @@ class SampleExporter {
         if safe.isEmpty { safe = "untitled" }
         return safe
     }
+
+    // MARK: - Issue #2: Extract samples from bank file
+
+    /// Audio format for extractSamples API
+    enum AudioFormat: String, CaseIterable {
+        case aiff = "AIFF"
+        case wav  = "WAV"
+    }
+
+    /// Metadata for an exported sample file
+    struct ExportedSample {
+        let name: String
+        let path: URL
+        let sampleRate: Int
+        let bitDepth: Int
+        let channels: Int
+        let duration: Double
+    }
+
+    /// Extract individual samples from an EMAX II bank file (.EB2 / EMX) and write as audio files.
+    ///
+    /// - Parameters:
+    ///   - bankURL:   Path to the bank file
+    ///   - outputDir: Directory to write audio files (created if it does not exist)
+    ///   - format:    Output format — `.wav` or `.aiff`
+    /// - Returns: Array of `ExportedSample` with metadata for each written file
+    /// - Throws: `ExportError` if the file cannot be read or contains no audio
+    static func extractSamples(
+        from bankURL: URL,
+        outputDir: URL,
+        format: AudioFormat
+    ) throws -> [ExportedSample] {
+        let bankData = try Data(contentsOf: bankURL)
+        guard bankData.count >= EmaxIIFormat.headerSize else { throw ExportError.noSampleData }
+
+        guard let bankSamples = EmaxIIParser.extractSampleData(from: bankData) else {
+            throw ExportError.noSampleData
+        }
+        guard !bankSamples.samples.isEmpty else { throw ExportError.noSampleData }
+
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+        let internalFormat: ExportFormat = (format == .aiff) ? .aiff : .wav
+        var results = [ExportedSample]()
+
+        for (index, sample) in bankSamples.samples.enumerated() {
+            guard !sample.pcmData.isEmpty else { continue }
+
+            let numberedName = String(format: "%02d_%@", index + 1, sample.name)
+            let sanitized = sanitizeFilename(numberedName)
+            let outputURL = outputDir
+                .appendingPathComponent(sanitized)
+                .appendingPathExtension(internalFormat.fileExtension)
+
+            try writePCMToFile(
+                pcmData: sample.pcmData,
+                sampleRate: Double(sample.sampleRate),
+                to: outputURL,
+                format: internalFormat
+            )
+
+            results.append(ExportedSample(
+                name: sample.name,
+                path: outputURL,
+                sampleRate: sample.sampleRate,
+                bitDepth: 16,
+                channels: 1,
+                duration: sample.duration
+            ))
+        }
+
+        return results
+    }
 }
