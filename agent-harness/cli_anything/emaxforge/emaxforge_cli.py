@@ -31,6 +31,7 @@ from cli_anything.emaxforge.handlers.bank_templates import BankTemplates
 from cli_anything.emaxforge.handlers.fat_analyzer import FATAnalyzer
 from cli_anything.emaxforge.handlers.disk_clone import clone_disk
 from cli_anything.emaxforge.handlers.disk_validator import validate_disk
+from cli_anything.emaxforge.handlers.bulk_import import bulk_import, collect_eb2_files
 
 
 @click.group()
@@ -218,6 +219,99 @@ def clone_disk_cmd(src_path, dst_path, banks_only, output_json):
             click.echo(json.dumps({"error": str(e)}))
         else:
             click.echo(f"❌ Clone failed: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("bulk-import")
+@click.option('--disk', type=click.Path(exists=True), required=True,
+              help='Target disk image (.hda)')
+@click.option('--source', required=True,
+              help='Directory or glob pattern of .EB2 files to import')
+@click.option('--recursive', '-r', is_flag=True, default=False,
+              help='Search source directory recursively')
+@click.option('--skip-existing', is_flag=True, default=True,
+              help='Skip banks already present on disk (default: on)')
+@click.option('--no-skip-existing', is_flag=True, default=False,
+              help='Re-import banks even if they already exist on disk')
+@click.option('--dry-run', is_flag=True, default=False,
+              help='Show what would be imported without writing anything')
+@click.option('--limit', type=int, default=None,
+              help='Max number of banks to import')
+@click.option('--sort', type=click.Choice(['name', 'size']), default='name',
+              help='Sort order for import (name or size)')
+@click.option('--no-progress', is_flag=True, help='Disable progress output')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def bulk_import_cmd(disk, source, recursive, skip_existing, no_skip_existing,
+                    dry_run, limit, sort, no_progress, output_json):
+    """Bulk import .EB2 banks from a directory or glob pattern.
+
+    \b
+    Examples:
+      # Import all EB2s from a directory
+      cli-anything-emaxforge bulk-import --disk HD20.hda --source /Volumes/EMAX\\ DRIVE/banks/
+
+      # Dry-run: see what would be imported
+      cli-anything-emaxforge bulk-import --disk HD20.hda --source ./banks/ --dry-run
+
+      # Import first 50, recursive
+      cli-anything-emaxforge bulk-import --disk HD20.hda --source ./banks/ -r --limit 50
+    """
+    try:
+        # --no-skip-existing overrides --skip-existing
+        do_skip = skip_existing and not no_skip_existing
+
+        if not output_json and not dry_run:
+            click.echo(f"📥 Bulk import → {disk}")
+            click.echo(f"   Source:  {source}")
+            click.echo(f"   Options: recursive={recursive}, skip_existing={do_skip}, limit={limit}")
+            click.echo()
+
+        result = bulk_import(
+            disk_path=disk,
+            source=source,
+            recursive=recursive,
+            skip_existing=do_skip,
+            dry_run=dry_run,
+            progress=not no_progress and not output_json,
+            sort_by=sort,
+            limit=limit,
+        )
+
+        if output_json:
+            click.echo(__import__('json').dumps(result, indent=2))
+            return
+
+        if dry_run:
+            click.echo(f"🔍 Dry run — {result['total_files']} files found")
+            click.echo(f"   To import: {result['to_import']}")
+            click.echo(f"   To skip:   {result['to_skip']}")
+            click.echo(f"   Clusters needed: {result['clusters_needed']} / {result['clusters_free']} free")
+            will_fit = result.get('will_fit', False)
+            click.echo(f"   Will fit: {'✅ yes' if will_fit else '❌ no — disk will fill up'}")
+            return
+
+        if not result.get('success'):
+            click.echo(f"❌ {result.get('error')}", err=True)
+            sys.exit(1)
+
+        click.echo()
+        click.echo(f"✅ Done — {result['imported']} imported, "
+                   f"{result['skipped']} skipped, "
+                   f"{result['failed']} failed "
+                   f"({result['elapsed_ms']} ms)")
+        if result.get('disk_full'):
+            click.echo("⚠️  Disk full — some banks were not imported")
+        if result['failed'] > 0:
+            click.echo("\nFailed banks:")
+            for r in result['results']:
+                if r['status'] == 'error':
+                    click.echo(f"  ❌ {r['name']}: {r.get('error', '?')}")
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)
 
 
