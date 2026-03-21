@@ -1,7 +1,7 @@
 # standard tools Feature Inventory vs EmaxForge Status
 
 **Source:** industry-standard format Reference Manual (38k+ lines)
-**Status Date:** 2026-03-17 06:30 CET
+**Status Date:** 2026-03-22 00:03 CET (updated)
 
 ## Core Operations (Section 3.1 Features)
 
@@ -29,11 +29,20 @@
    - ✅ Import banks from .EB2 files
    - ✅ Drag-and-drop banks
    - ✅ Delete banks
-   - ⚠️ Export banks (partial - needs testing)
+   - ✅ Export banks (.EB2) — verified
+   - ✅ Bulk import banks (entire directory, 18k+ EB2 files)
+   - ✅ Move/copy bank between disks (no EB2 intermediate)
+   - ✅ Rename bank in-place (EmaxForge exclusive — EMXP cannot do this)
+   - ✅ Delete banks
+
+6. **Disk Operations (CLI)**
+   - ✅ Clone disk (bit-for-bit copy, SHA1-verified)
+   - ✅ Verify/validate disk (boot sig, FAT, BNT, clusters)
+   - ✅ Repair disk (free orphan clusters, fix FAT allocation)
 
 ### 🔧 Partially Implemented
 
-5. **Sample Operations**
+7. **Sample Operations**
    - ⚠️ Convert WAV → EMAX II (basic implementation)
    - ❌ Convert AIFF → EMAX II
    - ❌ Export samples to WAV
@@ -41,14 +50,14 @@
    - ❌ Bit depth conversion (8→16, 16→8)
    - ❌ Looping (set loop points)
 
-6. **Batch Operations**
+8. **Batch Operations**
    - ❌ Batch convert (multiple WAVs at once)
-   - ❌ Batch import (multiple .EB2 files)
+   - ✅ Batch import (bulk-import command — directory or glob)
    - ❌ Batch format (multiple disks)
 
 ### ❌ Missing Features (standard tools has, EmaxForge lacks)
 
-7. **Cross-Platform Conversion** (Section 7)
+9. **Cross-Platform Conversion** (Section 7)
    - ❌ EMAX I ↔ EMAX II
    - ❌ Emulator I/II/III ↔ EMAX II
    - ❌ ESI-32 ↔ EMAX II
@@ -56,31 +65,33 @@
    - ❌ Akai S1000 ↔ EMAX II
    - ❌ SoundFont2 ↔ EMAX II
 
-8. **Physical Media Support** (Section 4.5)
-   - ❌ Physical floppy disk read/write
-   - ❌ Physical SCSI hard disk read/write
-   - ❌ HxC floppy emulator support
-   - ❌ SCSI2SD card direct access
+10. **Physical Media Support** (Section 4.5)
+    - ❌ Physical floppy disk read/write
+    - ❌ Physical SCSI hard disk read/write
+    - ❌ HxC floppy emulator support
+    - ❌ SCSI2SD card direct access
 
-9. **OS Management** (Section 6.4)
-   - ❌ Mass update OS on multiple disks
-   - ❌ OS version verification
-   - ❌ OS backup/restore
-   - ❌ Bootable floppy creation
+11. **OS Management** (Section 6.4)
+    - ❌ Mass update OS on multiple disks (not needed — OS 2.14 is final)
+    - ❌ OS version verification
+    - ❌ OS backup/restore
+    - ❌ Bootable floppy creation
 
-10. **Advanced Disk Operations** (Section 6.5)
-    - ❌ Clone entire disk (bit-for-bit copy)
-    - ❌ Disk verification/validation
+12. **Advanced Disk Operations** (Section 6.5)
+    - ✅ Clone entire disk (bit-for-bit, SHA1-verified)
+    - ✅ Disk verification/validation
+    - ✅ Orphan cluster repair / FAT fix
     - ❌ Bad sector handling
     - ❌ Partition management (SCSI2SD)
 
-11. **Validation & Repair** (Section 4.8)
-    - ❌ Corrupt bank detection
-    - ❌ Bank repair/recovery
-    - ❌ Validation error codes/reports
-    - ❌ Auto-fix corrupt metadata
+13. **Validation & Repair** (Section 4.8)
+    - ✅ Corrupt bank detection (verify-disk reports errors)
+    - ✅ FAT repair / orphan recovery
+    - ❌ Bank-level recovery (corrupted sample data)
+    - ✅ Validation error codes/reports
+    - ⚠️ Auto-fix metadata (partial — repair-disk handles FAT/BNT)
 
-12. **MIDI/RS422 Communication**
+14. **MIDI/RS422 Communication**
     - ❌ MIDI SysEx send/receive
     - ❌ RS422 sampler communication
     - ❌ Real-time bank transfer
