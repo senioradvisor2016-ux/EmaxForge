@@ -126,26 +126,36 @@ def list_banks_cmd(disk, output_json):
 
 @cli.command()
 @click.option('--disk', type=click.Path(exists=True), required=True, help='Disk .hda file')
+@click.option('--verbose', '-v', is_flag=True, help='Show all info messages')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON')
-def verify_disk_cmd(disk, output_json):
-    """Verify disk structure"""
+def verify_disk_cmd(disk, verbose, output_json):
+    """Deep-validate disk structure (boot sig, FAT, BNT, chains, duplicates, orphans)"""
+    from cli_anything.emaxforge.handlers.disk_validator import validate_disk, format_report, Severity
     try:
-        result = verify_disk(disk_path=disk)
-        
+        result = validate_disk(disk_path=disk)
+
         if output_json:
-            click.echo(json.dumps(result, indent=2))
+            import dataclasses
+            out = {
+                "disk_path": result.disk_path,
+                "valid": result.is_valid,
+                "total_clusters": result.total_clusters,
+                "used_clusters": result.used_clusters,
+                "free_clusters": result.free_clusters,
+                "banks": [
+                    {"slot": b.slot, "name": b.name,
+                     "start_cluster": b.start_cluster, "cluster_count": b.cluster_count}
+                    for b in result.banks
+                ],
+                "errors":   [{"code": i.code, "message": i.message, "slot": i.slot} for i in result.errors],
+                "warnings": [{"code": i.code, "message": i.message, "slot": i.slot} for i in result.warnings],
+            }
+            click.echo(json.dumps(out, indent=2))
         else:
-            status = "✅ VALID" if result['valid'] else "❌ INVALID"
-            click.echo(f"{status}: {result['disk_path']}")
-            
-            if result['checks']:
-                click.echo("\nChecks:")
-                for check in result['checks']:
-                    icon = "✅" if check['passed'] else "❌"
-                    click.echo(f"  {icon} {check['name']}: {check['message']}")
-            
-            if not result['valid']:
-                sys.exit(1)
+            click.echo(format_report(result, verbose=verbose))
+
+        if not result.is_valid:
+            sys.exit(1)
     except Exception as e:
         if output_json:
             click.echo(json.dumps({"error": str(e)}))
