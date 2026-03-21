@@ -32,6 +32,7 @@ from cli_anything.emaxforge.handlers.fat_analyzer import FATAnalyzer
 from cli_anything.emaxforge.handlers.disk_clone import clone_disk
 from cli_anything.emaxforge.handlers.disk_validator import validate_disk
 from cli_anything.emaxforge.handlers.bulk_import import bulk_import, collect_eb2_files
+from cli_anything.emaxforge.handlers.bank_mover import move_bank
 
 
 @click.group()
@@ -219,6 +220,77 @@ def clone_disk_cmd(src_path, dst_path, banks_only, output_json):
             click.echo(json.dumps({"error": str(e)}))
         else:
             click.echo(f"❌ Clone failed: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("move-bank")
+@click.option('--src', 'src_path', type=click.Path(exists=True), required=True,
+              help='Source disk (.hda)')
+@click.option('--dst', 'dst_path', type=click.Path(exists=True), required=True,
+              help='Destination disk (.hda)')
+@click.option('--bank', 'bank_name', required=True,
+              help='Name of bank to move/copy (case-insensitive)')
+@click.option('--rename', 'dst_bank_name', default=None,
+              help='Rename bank on destination (optional)')
+@click.option('--move', 'mode', flag_value='move', default=False,
+              help='Move mode: remove bank from source after copy')
+@click.option('--copy', 'mode', flag_value='copy', default=True,
+              help='Copy mode (default): keep bank on source')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def move_bank_cmd(src_path, dst_path, bank_name, dst_bank_name, mode, output_json):
+    """Copy or move a bank directly between two disk images.
+
+    \b
+    No intermediate .EB2 file needed — reads cluster data directly.
+
+    Examples:
+      # Copy bank from HD10 to HD20
+      cli-anything-emaxforge move-bank --src HD10.hda --dst HD20.hda --bank "STEEL DRUMS"
+
+      # Move bank (removes from source)
+      cli-anything-emaxforge move-bank --src HD10.hda --dst HD20.hda --bank "STEEL DRUMS" --move
+
+      # Copy and rename on destination
+      cli-anything-emaxforge move-bank --src HD10.hda --dst HD20.hda --bank "STEEL DRUMS" --rename "STEEL DRM2"
+    """
+    try:
+        if not output_json:
+            action = 'Moving' if mode == 'move' else 'Copying'
+            target = f'"{dst_bank_name}"' if dst_bank_name else f'"{bank_name}"'
+            click.echo(f"{'🚚' if mode == 'move' else '📋'} {action} bank {target}")
+            click.echo(f"   From: {src_path}")
+            click.echo(f"   To:   {dst_path}")
+
+        result = move_bank(
+            src_path=src_path,
+            dst_path=dst_path,
+            bank_name=bank_name,
+            mode=mode,
+            dst_bank_name=dst_bank_name,
+        )
+
+        if output_json:
+            click.echo(__import__('json').dumps(result, indent=2))
+            return
+
+        if result.get('success'):
+            elapsed = result['elapsed_ms']
+            clusters = result['clusters']
+            mb = clusters * 489_472 / (1024 * 1024)
+            dst_name = result['dst_bank_name']
+            click.echo(f"✅ Done — \"{dst_name}\" → slot {result['dst_slot']} "
+                       f"({clusters} clusters / {mb:.1f} MB / {elapsed} ms)")
+            if mode == 'move':
+                click.echo(f"   Removed from source slot {result['src_slot']}")
+        else:
+            click.echo(f"❌ {result.get('error')}", err=True)
+            sys.exit(1)
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)
 
 
