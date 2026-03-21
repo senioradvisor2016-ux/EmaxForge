@@ -52,6 +52,44 @@ cli-anything-emaxforge disk format --input HD10.hda --quick
 cli-anything-emaxforge disk info --input HD00.hda
 ```
 
+### Boot Disk Validation (Issue #5)
+
+Verify a `.hda` image is bootable on EMAX II **before** writing it to an SD card.
+
+```bash
+# Human-readable output (exit 0 = bootable, exit 1 = not bootable)
+cli-anything-emaxforge validate-boot HD00.hda
+
+# JSON output (for scripts / CI)
+cli-anything-emaxforge validate-boot HD00.hda --json
+```
+
+Four checks are performed:
+
+| Check | What it verifies |
+|-------|-----------------|
+| Boot signature | 2-byte EMAX II marker at offset `0x1FE` |
+| FAT entry 0 | Must equal `0x000F` (EMAX II FAT marker) |
+| OS data at cluster 1 | Non-zero bytes at cluster-area start (OS present) |
+| Catalog flags | BNT slot-0 flags within known-good set |
+
+The same validation is also available in the app via **ImageDetailView → Validate Boot** (bolt-shield icon).
+
+Example JSON output:
+
+```json
+{
+  "bootable": true,
+  "checks": [
+    {"name": "Boot signature",    "passed": true, "message": "0x78 0x82 at 0x1FE ✓"},
+    {"name": "FAT entry 0",       "passed": true, "message": "0x000F ✓"},
+    {"name": "OS data at cluster 1", "passed": true, "message": "offset 0x40000 non-zero ✓"},
+    {"name": "Catalog flags",     "passed": true, "message": "flags=0x0068 ✓"}
+  ],
+  "summary": "✅ All 4 boot checks passed — image is bootable"
+}
+```
+
 ### Bank Operations
 
 ```bash

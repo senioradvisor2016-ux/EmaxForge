@@ -233,17 +233,7 @@ class ImageCreator {
         // FAT is ALWAYS at 0x400 (sector 2) regardless of field_0x0C
         let fatOffset: UInt64 = 0x400
         let fatSize = fatSectors * 512
-        var cleanFAT = Data(count: fatSize)
-        cleanFAT.writeU16LE(0x8000, at: 0)  // FAT[0] reserved
-        cleanFAT.writeU16LE(0x7FFF, at: 2)  // FAT[1] OS end-of-chain
-        handle.seek(toFileOffset: fatOffset)
-        handle.write(cleanFAT)
-        
-        // Status byte at 0x200: must be 0x0F (bootable with OS)
-        // EMXP template has 0x09 (empty disk), working disk has 0x0F
-        handle.seek(toFileOffset: 0x200)
-        handle.write(Data([0x0F]))
-        
+
         // BNT/Catalog at field_0x10 * 512 (varies by size)
         let bntOffset = UInt64(bntStartSector) * 512
         let bntSize = (clusterAreaStartSector - bntStartSector) * 512
@@ -259,36 +249,39 @@ class ImageCreator {
         }
         handle.seek(toFileOffset: bntOffset)
         handle.write(cleanBNT)
-        
-        // CRITICAL: Write OS data to cluster 1
-        // According to VERIFICATION.md: OS is at 0x83C00 = clusterAreaStart + clusterSize
-        // But BankImporter uses: clusterAreaOffset + (cluster - 1) * clusterSize
-        // This means BankImporter writes cluster 1 to clusterAreaStart + 0
-        // 
-        // VERIFICATION.md says OS (cluster 1) is at 0x83C00 = clusterAreaStart + clusterSize
-        // This suggests the formula is: clusterAreaStart + (clusterNumber * clusterSize)
-        // NOT: clusterAreaStart + (clusterNumber - 1) * clusterSize
-        //
-        // However, if OS is at clusterAreaStart + clusterSize, and BankImporter writes
-        // cluster 2 to clusterAreaStart + clusterSize, they would overlap!
-        //
-        // FIXME: Need to verify which formula is correct by testing actual disk
-        // For now, using VERIFICATION.md formula: clusterAreaStart + clusterSize
-        let clusterSize = Int(header.readU32LE(at: 0x04))
-        let caOffset = UInt64(clusterAreaStartSector) * 512
-        let osOffset = caOffset + UInt64(clusterSize)  // Cluster 1 = clusterAreaStart + clusterSize (per VERIFICATION.md)
-        
-        if let osData = Self.loadResource("emax2_os", ext: "bin") {
-            let writeSize = min(osData.count, clusterSize)
-            handle.seek(toFileOffset: osOffset)
-            handle.write(osData[0..<writeSize])
-            print("📝 Wrote OS data: \(writeSize) bytes at 0x\(String(osOffset, radix: 16, uppercase: true)) (cluster 1)")
+
+        // Build clean FAT: reserved + full OS cluster chain + zero for user banks
+        // OS start cluster and count come from the preserved BNT slot 0 entry.
+        // BNT entry layout: [18-19]=start_cluster, [20-21]=cluster_count
+        // Verified against EmaxII-02.ez2: OS uses clusters 1→2→3→4→0x7FFF (4 clusters)
+        var cleanFAT = Data(count: fatSize)
+        cleanFAT.writeU16LE(0x8000, at: 0)  // FAT[0] reserved
+        let osStartCluster = Int(cleanBNT.readU16LE(at: 18))
+        let osClusterCount = Int(cleanBNT.readU16LE(at: 20))
+        if osClusterCount > 0 && osStartCluster > 0 {
+            // Build OS FAT chain: start → start+1 → ... → start+count-1 → 0x7FFF
+            for i in 0..<osClusterCount {
+                let cluster = osStartCluster + i
+                let next: UInt16 = i < osClusterCount - 1
+                    ? UInt16(osStartCluster + i + 1)
+                    : 0x7FFF
+                cleanFAT.writeU16LE(next, at: cluster * 2)
+            }
+            print("📝 FAT: OS chain cluster \(osStartCluster)→\(osStartCluster+osClusterCount-1)→0x7FFF (\(osClusterCount) clusters)")
         } else {
-            print("⚠️ emax2_os.bin not found — boot disk will not have OS!")
+            // Fallback: single OS cluster at 1
+            cleanFAT.writeU16LE(0x7FFF, at: 2)
+            print("⚠️ FAT: OS BNT entry missing cluster info, using single-cluster fallback")
         }
-        
+        handle.seek(toFileOffset: fatOffset)
+        handle.write(cleanFAT)
+
+        // Status byte at 0x200: must be 0x0F (bootable with OS)
+        handle.seek(toFileOffset: 0x200)
+        handle.write(Data([0x0F]))
+
         handle.synchronizeFile()
-        print("✅ Created bootable image from template (FAT+BNT cleaned, OS written)")
+        print("✅ Created bootable image from template (FAT+BNT cleaned, OS chain restored)")
     }
     
     /// Legacy method: Build from scratch using binary templates
@@ -453,8 +446,8 @@ class ImageCreator {
         // Rest is 0x0000 (free) — no OS, no banks
         handle.seek(toFileOffset: fatOffset)
         handle.write(cleanFAT)
-        
-        // Clear ALL BNT/Catalog entries (data disk, no OS)
+
+        // Clear ALL BNT/Catalog entries (blank data disk — no OS entry)
         let bntOffset = UInt64(bntStartSector) * 512
         let bntSize = (clusterAreaStartSector - bntStartSector) * 512
         let zeroBNT = Data(count: bntSize)
