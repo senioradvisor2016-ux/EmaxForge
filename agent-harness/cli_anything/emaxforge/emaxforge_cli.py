@@ -35,7 +35,7 @@ from cli_anything.emaxforge.handlers.bulk_import import bulk_import, collect_eb2
 from cli_anything.emaxforge.handlers.bank_mover import move_bank
 from cli_anything.emaxforge.handlers.disk_repair import repair_disk, format_repair_report
 from cli_anything.emaxforge.handlers.bank_renamer import rename_bank
-from cli_anything.emaxforge.handlers.sample_extractor import extract_samples
+from cli_anything.emaxforge.handlers.sample_extractor import extract_samples, BNT_MAX_SLOTS
 
 
 @click.group()
@@ -362,6 +362,103 @@ def extract_samples_cmd(source_path, output_dir, slot, fmt, normalize, output_js
         else:
             click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)
+
+
+@cli.command("batch-extract-samples")
+@click.option('--disk', type=click.Path(exists=True), required=True,
+              help='Source .hda disk image')
+@click.option('--output-dir', required=True,
+              help='Base directory — one subfolder per bank (e.g. ~/Desktop/HD10_Samples)')
+@click.option('--start-slot', type=int, default=1, show_default=True,
+              help='First slot to extract (skip slot 0 = OS)')
+@click.option('--end-slot', type=int, default=99, show_default=True,
+              help='Last slot to extract (inclusive)')
+@click.option('--format', 'fmt', type=click.Choice(['wav', 'aiff'], case_sensitive=False),
+              default='wav', show_default=True, help='Output audio format')
+@click.option('--normalize', is_flag=True, help='Normalize audio to full dynamic range')
+@click.option('--no-progress', is_flag=True, help='Suppress per-bank progress output')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON summary')
+def batch_extract_samples_cmd(disk, output_dir, start_slot, end_slot, fmt, normalize,
+                              no_progress, output_json):
+    """Extract samples from all banks in a disk image.
+
+    \b
+    Creates one named subfolder per bank:
+      01_STEEL DRUMS/01_STEEL DRUMS.wav
+      02_BEHIND THE/01_BEHIND THE.wav
+      ...
+
+    Examples:
+      cli-anything-emaxforge batch-extract-samples \\
+        --disk HD10.hda --output-dir ~/Desktop/HD10_Samples/
+
+      cli-anything-emaxforge batch-extract-samples \\
+        --disk HD10.hda --output-dir ~/Desktop/ --format aiff --normalize
+    """
+    import re as _re
+    import time as _time
+
+    t0 = _time.time()
+    base = Path(output_dir).expanduser()
+    base.mkdir(parents=True, exist_ok=True)
+
+    ok = 0; skipped = 0; total_ms = 0
+    results = []
+
+    for slot in range(start_slot, min(end_slot + 1, BNT_MAX_SLOTS)):
+        tmp_dir = base / f"__tmp_slot{slot}"
+        r = extract_samples(
+            source_path=disk,
+            output_dir=str(tmp_dir),
+            fmt=fmt,
+            normalize=normalize,
+            slot=slot,
+        )
+        if not r.get('success'):
+            skipped += 1
+            if tmp_dir.exists():
+                import shutil; shutil.rmtree(str(tmp_dir))
+            continue
+
+        name      = r.get('bank_name', f'slot{slot}')
+        safe_name = _re.sub(r'[/:*?"<>|\\]', '_', name).strip()
+        dir_name  = f'{slot:02d}_{safe_name}'
+        dest      = base / dir_name
+        tmp_dir.rename(dest)
+
+        ms = r.get('elapsed_ms', 0)
+        total_ms += ms
+        ok += 1
+
+        entry = {
+            'slot':          slot,
+            'bank_name':     name,
+            'output_dir':    str(dest),
+            'total_samples': r.get('total_samples', 0),
+            'elapsed_ms':    ms,
+        }
+        results.append(entry)
+
+        if not no_progress and not output_json:
+            n = r.get('total_samples', 0)
+            click.echo(f"  [{slot:2d}] {name:<20s} → {n} file(s)")
+
+    elapsed = int((_time.time() - t0) * 1000)
+    summary = {
+        'success':     True,
+        'extracted':   ok,
+        'skipped':     skipped,
+        'output_dir':  str(base),
+        'elapsed_ms':  elapsed,
+        'banks':       results,
+    }
+
+    if output_json:
+        click.echo(json.dumps(summary, indent=2))
+    else:
+        click.echo(f"\n✅ {ok} banks extracted ({skipped} empty slots skipped)")
+        click.echo(f"   Output: {base}")
+        click.echo(f"   Time:   {elapsed} ms")
 
 
 @cli.command("rename-bank")
