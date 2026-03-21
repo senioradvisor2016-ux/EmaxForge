@@ -36,11 +36,12 @@ class FATAnalyzer:
     FAT_OFFSET = 512  # FAT starts at sector 1
     FAT_ENTRY_SIZE = 2  # 16-bit entries
     
-    # FAT markers
-    END_OF_CHAIN = 0x7FFF
-    END_OF_CHAIN_ALT = 0xFFFF
-    FREE_CLUSTER = 0x8080
-    RESERVED = 0x8000
+    # FAT markers (verified against EMAX II format)
+    END_OF_CHAIN     = 0x7FFF   # normal EOC
+    END_OF_CHAIN_ALT = 0xFFFF   # alt EOC
+    FREE_CLUSTER     = 0x0000   # free cluster (most common)
+    FREE_CLUSTER_ALT = 0x8080   # alternative free marker seen in some disks
+    RESERVED         = 0x8000   # reserved (FAT[0])
     
     def __init__(self, disk_path: str):
         self.disk_path = Path(disk_path)
@@ -55,20 +56,31 @@ class FATAnalyzer:
     def _load_fat(self):
         """Load FAT from disk"""
         with open(self.disk_path, 'rb') as f:
-            # Get cluster size from header
-            f.seek(0x0C)
-            blocks = struct.unpack('<I', f.read(4))[0]
-            self.cluster_size = int(blocks) * 8192
-            
-            # Get total clusters (estimate from disk size)
-            f.seek(0, 2)  # End of file
+            # Read header sector
+            f.seek(0)
+            hdr = f.read(512)
+
+            # cluster_size: header offset 0x04 (U32LE), bytes directly
+            self.cluster_size = struct.unpack_from('<I', hdr, 0x04)[0]
+            if self.cluster_size == 0 or self.cluster_size > 0x200000:
+                raise ValueError(f"Invalid cluster size in header: {self.cluster_size}")
+
+            # fat_sectors: header offset 0x08 (U32LE)
+            fat_sectors = struct.unpack_from('<I', hdr, 0x08)[0]
+
+            # ca_start_sector: header offset 0x20 (U32LE)
+            ca_start_sector = struct.unpack_from('<I', hdr, 0x20)[0]
+
+            # Total clusters from disk size and ca_start
+            f.seek(0, 2)
             disk_size = f.tell()
-            self.total_clusters = disk_size // self.cluster_size
-            
-            # Read FAT
-            f.seek(self.FAT_OFFSET)
-            fat_size = min(self.total_clusters * 2, 10000)  # Max 10KB FAT read
-            fat_data = f.read(fat_size)
+            ca_bytes = ca_start_sector * 512
+            self.total_clusters = (disk_size - ca_bytes) // self.cluster_size
+
+            # Read FAT (always at 0x400, fat_sectors * 512 bytes)
+            fat_byte_offset = 0x400
+            f.seek(fat_byte_offset)
+            fat_data = f.read(fat_sectors * 512)
             
             # Parse FAT entries
             for i in range(0, len(fat_data), 2):
@@ -78,11 +90,15 @@ class FATAnalyzer:
     
     def is_end_marker(self, value: int) -> bool:
         """Check if value is end-of-chain marker"""
-        return value in [self.END_OF_CHAIN, self.END_OF_CHAIN_ALT]
-    
+        return value in (self.END_OF_CHAIN, self.END_OF_CHAIN_ALT)
+
     def is_free(self, value: int) -> bool:
-        """Check if cluster is free"""
-        return value in [0, self.FREE_CLUSTER]
+        """Check if cluster is free/unused"""
+        return value in (self.FREE_CLUSTER, self.FREE_CLUSTER_ALT)
+
+    def is_reserved(self, value: int) -> bool:
+        """Check if FAT entry is reserved (e.g. FAT[0])"""
+        return value == self.RESERVED
     
     def follow_chain(self, start_cluster: int, max_length: int = 1000) -> FATChain:
         """Follow FAT chain from start cluster
@@ -141,15 +157,31 @@ class FATAnalyzer:
         chains: List[FATChain] = []
         allocated: Set[int] = set()
         
-        # Start from cluster 1 (cluster 0 is reserved)
-        for i in range(1, len(self.fat)):
+        # Only scan valid clusters (1..total_clusters); FAT table may be larger
+        scan_limit = min(self.total_clusters + 1, len(self.fat))
+
+        # Find all clusters that are TARGETS of another FAT entry (mid-chain or end)
+        targets: set = set()
+        for i in range(1, scan_limit):
+            val = self.fat[i]
+            if not self.is_free(val) and not self.is_reserved(val) and not self.is_end_marker(val):
+                if 1 <= val < scan_limit:
+                    targets.add(val)
+
+        # Chain-starts = allocated clusters NOT pointed to by another cluster
+        # An "allocated" cluster has FAT[i] != free AND FAT[i] != reserved
+        for i in range(1, scan_limit):
             if i in allocated:
                 continue
-            
-            if self.is_free(self.fat[i]) or i == 0:
-                continue
-            
-            # Found chain start
+
+            val = self.fat[i]
+            if self.is_free(val) or self.is_reserved(val):
+                continue  # cluster i is free → skip
+
+            if i in targets:
+                continue  # cluster i is mid-chain → skip
+
+            # cluster i is a chain-start (FAT[i] is EOC or pointer, not targeted by others)
             chain = self.follow_chain(i)
             chains.append(chain)
             allocated.update(chain.clusters)
@@ -169,14 +201,18 @@ class FATAnalyzer:
             allocated_in_chains.update(chain.clusters)
         
         orphaned: List[int] = []
-        
-        for i in range(1, len(self.fat)):
+
+        # Only scan valid cluster range (1..total_clusters)
+        scan_limit = min(self.total_clusters + 1, len(self.fat))
+
+        for i in range(1, scan_limit):
             if i in allocated_in_chains:
                 continue
-            
-            if not self.is_free(self.fat[i]) and not self.is_end_marker(self.fat[i]):
+
+            val = self.fat[i]
+            if not self.is_free(val) and not self.is_reserved(val) and not self.is_end_marker(val):
                 orphaned.append(i)
-        
+
         return orphaned
     
     def analyze(self) -> Dict[str, Any]:

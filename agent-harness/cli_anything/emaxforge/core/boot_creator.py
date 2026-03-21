@@ -85,9 +85,10 @@ def create_boot_disk(size_mb: int, output_path: str, os_version: str = "2.14",
         sects_per_cluster = (disk_size_sectors - ca_start_sector) // total_clusters
         cluster_size      = sects_per_cluster * 512
 
-        # 1. Status byte at 0x200: 0x0F = bootable with OS (template has 0x09 = empty)
+        # 1. FAT[0] at 0x200: 0x09 = bootable empty (EMXP standard for new boot disk)
+        #    0x0F = boot disk with banks added later
         f.seek(0x200)
-        f.write(b'\x0F')
+        f.write(b'\x09')
 
         # 2. Clear BNT area (template has 0x42 fill = garbage entries)
         # Preserve slot 0 (OS entry, 32 bytes), zero rest
@@ -115,18 +116,15 @@ def create_boot_disk(size_mb: int, output_path: str, os_version: str = "2.14",
         # Read OS location from BNT slot 0
         f.seek(bnt_offset)
         slot0_raw = bytearray(f.read(32))
-        os_start_cls_scaled = struct.unpack_from('<H', slot0_raw, 16)[0]  # e.g. 0x7800
-        os_sector_count     = struct.unpack_from('<H', slot0_raw, 18)[0]  # in sectors
+        os_start_cluster = struct.unpack_from('<H', slot0_raw, 18)[0]  # BNT +18 = startCluster (1-based)
+        os_cluster_count = struct.unpack_from('<H', slot0_raw, 20)[0]  # BNT +20 = clusterCount
 
-        # Convert scaled startCluster to cluster index and byte offset
-        os_cluster_idx     = os_start_cls_scaled // sects_per_cluster
-        os_byte_offset     = ca_offset + os_cluster_idx * cluster_size
+        # Convert 1-based cluster index to byte offset
+        os_cluster_idx     = os_start_cluster  # already 1-based (cluster 1 = OS)
+        os_byte_offset     = ca_offset + (os_cluster_idx - 1) * cluster_size
 
         # How many clusters does the OS span?
-        if os_sector_count > 0:
-            os_clusters_needed = (os_sector_count * 512 + cluster_size - 1) // cluster_size
-        else:
-            os_clusters_needed = 1
+        os_clusters_needed = os_cluster_count if os_cluster_count > 0 else 1
 
         if os_bin:
             os_data = os_bin.read_bytes()

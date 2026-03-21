@@ -29,6 +29,12 @@ from cli_anything.emaxforge.handlers.zuluscsi_config import ZuluSCSIConfig
 from cli_anything.emaxforge.handlers.catalog import CatalogParser
 from cli_anything.emaxforge.handlers.bank_templates import BankTemplates
 from cli_anything.emaxforge.handlers.fat_analyzer import FATAnalyzer
+from cli_anything.emaxforge.handlers.disk_clone import clone_disk
+from cli_anything.emaxforge.handlers.disk_validator import validate_disk
+from cli_anything.emaxforge.handlers.bulk_import import bulk_import, collect_eb2_files
+from cli_anything.emaxforge.handlers.bank_mover import move_bank
+from cli_anything.emaxforge.handlers.disk_repair import repair_disk, format_repair_report
+from cli_anything.emaxforge.handlers.bank_renamer import rename_bank
 
 
 @click.group()
@@ -126,29 +132,366 @@ def list_banks_cmd(disk, output_json):
 
 @cli.command()
 @click.option('--disk', type=click.Path(exists=True), required=True, help='Disk .hda file')
+@click.option('--verbose', '-v', is_flag=True, help='Show all info messages')
 @click.option('--json', 'output_json', is_flag=True, help='Output JSON')
-def verify_disk_cmd(disk, output_json):
-    """Verify disk structure"""
+def verify_disk_cmd(disk, verbose, output_json):
+    """Deep-validate disk structure (boot sig, FAT, BNT, chains, duplicates, orphans)"""
+    from cli_anything.emaxforge.handlers.disk_validator import validate_disk, format_report, Severity
     try:
-        result = verify_disk(disk_path=disk)
-        
+        result = validate_disk(disk_path=disk)
+
         if output_json:
-            click.echo(json.dumps(result, indent=2))
+            import dataclasses
+            out = {
+                "disk_path": result.disk_path,
+                "valid": result.is_valid,
+                "total_clusters": result.total_clusters,
+                "used_clusters": result.used_clusters,
+                "free_clusters": result.free_clusters,
+                "banks": [
+                    {"slot": b.slot, "name": b.name,
+                     "start_cluster": b.start_cluster, "cluster_count": b.cluster_count}
+                    for b in result.banks
+                ],
+                "errors":   [{"code": i.code, "message": i.message, "slot": i.slot} for i in result.errors],
+                "warnings": [{"code": i.code, "message": i.message, "slot": i.slot} for i in result.warnings],
+            }
+            click.echo(json.dumps(out, indent=2))
         else:
-            status = "✅ VALID" if result['valid'] else "❌ INVALID"
-            click.echo(f"{status}: {result['disk_path']}")
-            
-            if result['checks']:
-                click.echo("\nChecks:")
-                for check in result['checks']:
-                    icon = "✅" if check['passed'] else "❌"
-                    click.echo(f"  {icon} {check['name']}: {check['message']}")
-            
-            if not result['valid']:
-                sys.exit(1)
+            click.echo(format_report(result, verbose=verbose))
+
+        if not result.is_valid:
+            sys.exit(1)
     except Exception as e:
         if output_json:
             click.echo(json.dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("clone-disk")
+@click.option('--src', 'src_path', type=click.Path(exists=True), required=True,
+              help='Source disk (.hda / .EZ2)')
+@click.option('--dst', 'dst_path', type=click.Path(), required=True,
+              help='Destination path for the cloned disk')
+@click.option('--banks-only', is_flag=True, default=False,
+              help='Copy banks only (skip OS cluster) — creates a data-disk clone')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON result')
+def clone_disk_cmd(src_path, dst_path, banks_only, output_json):
+    """Clone a disk image bit-for-bit (EMXP Clone Disk equivalent).
+
+    Full clone:      identical byte-for-byte copy of the entire disk.
+    --banks-only:    copy BNT + bank cluster data only (skip OS cluster).
+    """
+    try:
+        last_pct = [-1]
+
+        def progress(done, total):
+            if output_json:
+                return
+            pct = int(done * 100 / total) if total else 0
+            if pct != last_pct[0] and pct % 10 == 0:
+                click.echo(f"  {pct}%...", nl=False)
+                last_pct[0] = pct
+
+        if not output_json:
+            mode_label = "banks-only" if banks_only else "full"
+            click.echo(f"🔁 Cloning ({mode_label}): {src_path} → {dst_path}")
+
+        result = clone_disk(
+            src_path=src_path,
+            dst_path=dst_path,
+            banks_only=banks_only,
+            progress_cb=progress,
+        )
+
+        if not output_json:
+            click.echo()  # newline after progress dots
+            size_mb = result['size_bytes'] / (1024 * 1024)
+            elapsed = result['elapsed_ms']
+            click.echo(f"✅ Clone complete — {size_mb:.1f} MB in {elapsed} ms")
+            if banks_only:
+                click.echo(f"   Banks copied: {result.get('banks_copied', 0)}")
+            click.echo(f"   Destination:  {result['dst']}")
+        else:
+            click.echo(json.dumps(result, indent=2))
+
+    except Exception as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Clone failed: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("move-bank")
+@click.option('--src', 'src_path', type=click.Path(exists=True), required=True,
+              help='Source disk (.hda)')
+@click.option('--dst', 'dst_path', type=click.Path(exists=True), required=True,
+              help='Destination disk (.hda)')
+@click.option('--bank', 'bank_name', required=True,
+              help='Name of bank to move/copy (case-insensitive)')
+@click.option('--rename', 'dst_bank_name', default=None,
+              help='Rename bank on destination (optional)')
+@click.option('--move', 'mode', flag_value='move', default=False,
+              help='Move mode: remove bank from source after copy')
+@click.option('--copy', 'mode', flag_value='copy', default=True,
+              help='Copy mode (default): keep bank on source')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def move_bank_cmd(src_path, dst_path, bank_name, dst_bank_name, mode, output_json):
+    """Copy or move a bank directly between two disk images.
+
+    \b
+    No intermediate .EB2 file needed — reads cluster data directly.
+
+    Examples:
+      # Copy bank from HD10 to HD20
+      cli-anything-emaxforge move-bank --src HD10.hda --dst HD20.hda --bank "STEEL DRUMS"
+
+      # Move bank (removes from source)
+      cli-anything-emaxforge move-bank --src HD10.hda --dst HD20.hda --bank "STEEL DRUMS" --move
+
+      # Copy and rename on destination
+      cli-anything-emaxforge move-bank --src HD10.hda --dst HD20.hda --bank "STEEL DRUMS" --rename "STEEL DRM2"
+    """
+    try:
+        if not output_json:
+            action = 'Moving' if mode == 'move' else 'Copying'
+            target = f'"{dst_bank_name}"' if dst_bank_name else f'"{bank_name}"'
+            click.echo(f"{'🚚' if mode == 'move' else '📋'} {action} bank {target}")
+            click.echo(f"   From: {src_path}")
+            click.echo(f"   To:   {dst_path}")
+
+        result = move_bank(
+            src_path=src_path,
+            dst_path=dst_path,
+            bank_name=bank_name,
+            mode=mode,
+            dst_bank_name=dst_bank_name,
+        )
+
+        if output_json:
+            click.echo(__import__('json').dumps(result, indent=2))
+            return
+
+        if result.get('success'):
+            elapsed = result['elapsed_ms']
+            clusters = result['clusters']
+            mb = clusters * 489_472 / (1024 * 1024)
+            dst_name = result['dst_bank_name']
+            click.echo(f"✅ Done — \"{dst_name}\" → slot {result['dst_slot']} "
+                       f"({clusters} clusters / {mb:.1f} MB / {elapsed} ms)")
+            if mode == 'move':
+                click.echo(f"   Removed from source slot {result['src_slot']}")
+        else:
+            click.echo(f"❌ {result.get('error')}", err=True)
+            sys.exit(1)
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("rename-bank")
+@click.option('--disk', type=click.Path(exists=True), required=True,
+              help='Disk image (.hda)')
+@click.option('--bank', 'old_name', required=True,
+              help='Current bank name (case-insensitive)')
+@click.option('--new-name', 'new_name', required=True,
+              help='New name (max 14 chars)')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def rename_bank_cmd(disk, old_name, new_name, output_json):
+    """Rename a bank in-place on a disk image.
+
+    \b
+    Edits the 14-byte name field in the BNT directly — no export/import needed.
+    EMXP has no rename feature; this is an EmaxForge exclusive.
+
+    Example:
+      cli-anything-emaxforge rename-bank --disk HD10.hda --bank "STEEL DRUMS" --new-name "STEEL 808"
+    """
+    try:
+        result = rename_bank(disk_path=disk, old_name=old_name, new_name=new_name)
+
+        if output_json:
+            click.echo(__import__('json').dumps(result, indent=2))
+            return
+
+        if result.get('success'):
+            click.echo(f"✅ Renamed: \"{result['old_name']}\" → \"{result['new_name']}\"  (slot {result['slot']})")
+        else:
+            click.echo(f"❌ {result.get('error')}", err=True)
+            sys.exit(1)
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("repair-disk")
+@click.option('--disk', type=click.Path(exists=True), required=True,
+              help='Disk image to repair (.hda)')
+@click.option('--output', 'dst_path', type=click.Path(), default=None,
+              help='Write repaired disk here (default: in-place)')
+@click.option('--dry-run', is_flag=True, default=False,
+              help='Show what would be repaired without writing')
+@click.option('--verbose', '-v', is_flag=True,
+              help='Show every individual fix action')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def repair_disk_cmd(disk, dst_path, dry_run, verbose, output_json):
+    """Repair disk image: free orphan clusters, fix broken FAT chains, correct BNT counts.
+
+    \b
+    Safe: never touches cluster data — only FAT entries and BNT metadata.
+    Use --dry-run first to preview all repairs before applying.
+
+    Examples:
+      # Preview repairs
+      cli-anything-emaxforge repair-disk --disk HD10.hda --dry-run
+
+      # Repair in-place
+      cli-anything-emaxforge repair-disk --disk HD10.hda
+
+      # Repair to new file (leave original untouched)
+      cli-anything-emaxforge repair-disk --disk HD10.hda --output HD10_repaired.hda
+    """
+    try:
+        if not output_json and not dry_run and dst_path is None:
+            click.echo(f"⚠️  Repairing in-place: {disk}")
+            click.echo("   (use --output to write a copy instead)")
+            click.echo()
+
+        report = repair_disk(
+            disk_path=disk,
+            dst_path=dst_path,
+            dry_run=dry_run,
+        )
+
+        if output_json:
+            import dataclasses
+            out = {
+                'disk_path':        report.disk_path,
+                'dry_run':          report.dry_run,
+                'total_clusters':   report.total_clusters,
+                'orphans_freed':    report.orphans_freed,
+                'chains_truncated': report.chains_truncated,
+                'bnt_counts_fixed': report.bnt_counts_fixed,
+                'duplicate_names':  report.duplicate_names,
+                'total_fixes':      report.total_fixes,
+                'elapsed_ms':       report.elapsed_ms,
+                'actions': [
+                    {'kind': a.kind, 'cluster': a.cluster,
+                     'slot': a.slot, 'bank_name': a.bank_name, 'detail': a.detail}
+                    for a in report.actions
+                ],
+            }
+            click.echo(__import__('json').dumps(out, indent=2))
+        else:
+            click.echo(format_repair_report(report, verbose=verbose))
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("bulk-import")
+@click.option('--disk', type=click.Path(exists=True), required=True,
+              help='Target disk image (.hda)')
+@click.option('--source', required=True,
+              help='Directory or glob pattern of .EB2 files to import')
+@click.option('--recursive', '-r', is_flag=True, default=False,
+              help='Search source directory recursively')
+@click.option('--skip-existing', is_flag=True, default=True,
+              help='Skip banks already present on disk (default: on)')
+@click.option('--no-skip-existing', is_flag=True, default=False,
+              help='Re-import banks even if they already exist on disk')
+@click.option('--dry-run', is_flag=True, default=False,
+              help='Show what would be imported without writing anything')
+@click.option('--limit', type=int, default=None,
+              help='Max number of banks to import')
+@click.option('--sort', type=click.Choice(['name', 'size']), default='name',
+              help='Sort order for import (name or size)')
+@click.option('--no-progress', is_flag=True, help='Disable progress output')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def bulk_import_cmd(disk, source, recursive, skip_existing, no_skip_existing,
+                    dry_run, limit, sort, no_progress, output_json):
+    """Bulk import .EB2 banks from a directory or glob pattern.
+
+    \b
+    Examples:
+      # Import all EB2s from a directory
+      cli-anything-emaxforge bulk-import --disk HD20.hda --source /Volumes/EMAX\\ DRIVE/banks/
+
+      # Dry-run: see what would be imported
+      cli-anything-emaxforge bulk-import --disk HD20.hda --source ./banks/ --dry-run
+
+      # Import first 50, recursive
+      cli-anything-emaxforge bulk-import --disk HD20.hda --source ./banks/ -r --limit 50
+    """
+    try:
+        # --no-skip-existing overrides --skip-existing
+        do_skip = skip_existing and not no_skip_existing
+
+        if not output_json and not dry_run:
+            click.echo(f"📥 Bulk import → {disk}")
+            click.echo(f"   Source:  {source}")
+            click.echo(f"   Options: recursive={recursive}, skip_existing={do_skip}, limit={limit}")
+            click.echo()
+
+        result = bulk_import(
+            disk_path=disk,
+            source=source,
+            recursive=recursive,
+            skip_existing=do_skip,
+            dry_run=dry_run,
+            progress=not no_progress and not output_json,
+            sort_by=sort,
+            limit=limit,
+        )
+
+        if output_json:
+            click.echo(__import__('json').dumps(result, indent=2))
+            return
+
+        if dry_run:
+            click.echo(f"🔍 Dry run — {result['total_files']} files found")
+            click.echo(f"   To import: {result['to_import']}")
+            click.echo(f"   To skip:   {result['to_skip']}")
+            click.echo(f"   Clusters needed: {result['clusters_needed']} / {result['clusters_free']} free")
+            will_fit = result.get('will_fit', False)
+            click.echo(f"   Will fit: {'✅ yes' if will_fit else '❌ no — disk will fill up'}")
+            return
+
+        if not result.get('success'):
+            click.echo(f"❌ {result.get('error')}", err=True)
+            sys.exit(1)
+
+        click.echo()
+        click.echo(f"✅ Done — {result['imported']} imported, "
+                   f"{result['skipped']} skipped, "
+                   f"{result['failed']} failed "
+                   f"({result['elapsed_ms']} ms)")
+        if result.get('disk_full'):
+            click.echo("⚠️  Disk full — some banks were not imported")
+        if result['failed'] > 0:
+            click.echo("\nFailed banks:")
+            for r in result['results']:
+                if r['status'] == 'error':
+                    click.echo(f"  ❌ {r['name']}: {r.get('error', '?')}")
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
         else:
             click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)

@@ -1,0 +1,581 @@
+E-mu Systems, Inc.
+applied magic for the arts
+
+
+
+
+                                16 - BIT DIGITAL SOUND SYSTEM
+
+
+
+
+                             DIAGNOSTICS AND TRIMS
+
+
+
+
+                                           © E-mu Systems Inc. 1990
+                               Enhanced by The Emulator Archive 1999
+                                            www.emulatorarchive.com
+Emax II Diagnostics and Functional Test Procedures
+
+
+DIAGNOSTICS & FUNCTION TESTS
+1      OVERVIEW
+A complete functional test should be the first step in diagnosing a
+problem on the Emax II. Many times a complete functional will
+reveal important clues to the problem, which might have otherwise
+overlooked. Try to isolate the problem as much as possible through
+the operational controls, and then go in with your instruments to nail
+it down. When dealing with a 16-bit audio system, a high quality
+amplifier and speaker system is a necessity in order to pick out
+subtle audio problems.
+
+Although the microprocessor and output sections should not give
+you much trouble, certain sections of the Emax II may be more
+difficult to troubleshoot. Because of the difficulty associated with
+removing and re-soldering surface-mount IC’s, problems involving
+these chips should be referred to the factory. If you have isolated
+the problem to a surface-mount chip, a board swap is in order.
+Simply call the E-mu Customer Service Department to arrange for a
+board swap.
+
+The Emax II contains a number of on-board diagnostic tests. These
+can be accessed or read from the front panel without even opening
+the unit!
+
+
+2       NOTICE
+Because of the complexity of the custom LSI chips and surrounding
+circuitry in the Emax II, the schematic diagrams for these sections
+have been deliberately omitted. Complex timing diagrams and
+theory be yond the scope of this manual are necessary to
+troubleshoot these sections. 99% of all Emax II problems can be
+diagnosed and repaired without knowledge of these chips. In fact,
+we even use the “shotgun” method here at the factory (it’s faster). If
+you are ever in doubt about a particular problem, please don’t
+hesitate to call us for assistance. We’ll be happy to help.
+
+Call E-mu Customer Service at (408) 438-1921 between the hours
+of 8:30 am and 5:00 pm PST, Monday through Friday.
+
+
+
+
+© 1990 E-mu Systems Inc.                                                 Page 1
+Emax II Diagnostics and Functional Test Procedures
+
+
+                             3         BOOTPROM DIAGNOSTICS
+                             The bootprom diagnostic tests are invoked each time Emax II is
+                             powered up. On power-up, hardware in the Emax II turns on all
+                             LED’s. Hence, a completely dead CPU will probably have all LED’s
+                             lit. If all LED’s don’t light on power-up, something in hardware is
+                             seriously wrong. If a test fails, the associated LED is not
+                             extinguished, but the subsequent tests are performed and a boot is
+                             attempted.
+
+                             The LED’s are extinguished for the following reasons:
+
+                                 ENTER               -   Turned off as the CPU’s first instruction.
+
+                                 SEQUENCER           -   Turned off if CPU RAM is basically
+                                                         functional. No use of the RAM is made
+                                                         until after this test is performed.
+
+                                 TRANSPOSE           -   Turned off if the analog jack port is
+                                                         detected. This will remain lit if the
+                                                         analog board is not plugged in.
+
+                                 DRIVE SELECT -          Turned off if LSI #2 can be written and
+                                                         read.
+
+                                 MASTER              -   Turned off only if LSI #1 can be written
+                                                         and read AND there is working memory
+                                                         installed. (On Turbo units, the memory
+                                                         expansion board must be installed for
+                                                         this test to pass.)
+
+                                 SAMPLE              -   Turned off if the 8254 timer works.
+
+                                 DIGITAL PROC. -         Turned off if the MIDI/RS422 UART
+                                                         works.
+
+                                 PRESET MAN -            Turned off if the scanner is present and
+                                                         initialized.
+
+                                 PRESET DEF. -           Turned off if the floppy controller can
+                                                         seek to track 00. This requires that both
+                                                         the floppy chip and the drive be
+                                                         connected.
+
+                                 DYNAMIC PROC. -          Turned off after a complete software
+                                                          boot.
+                                 (Emax II will boot with the output board disconnected.)
+
+
+© 1990 E-mu Systems Inc.                                                                     Page 2
+Emax II Diagnostics and Functional Test Procedures
+
+
+                             4     SPECIAL FUNCTION DIAGNOSTICS
+                             These on-board tests are hidden from the user in the Special
+                             Functions menu. They may be accessed in the following manner:
+
+                             1.      Activate MASTER, 9 (Special).
+                                     The following screen is displayed.
+
+                                                   Special
+                                                [1—6] / Slider
+
+                             2.      To enter the hidden diagnostics press 9 on the keypad.
+
+                                     Remember: 1 number past the last choice.
+
+                             3.      The display now reads:
+
+                                             Emax2Diagnostics
+                                               Enter Code:
+
+                             4.      The Secret Code is: 3 - 6 - 2- 9 or Emax spelled on the
+                                     telephone dial. The display now says:
+
+
+                                             Emax2Diagnostics
+                                               [1—6] / Slider
+
+                             5.      The test number may be selected either with the data slider
+                                     or by entering the test number on the numeric keypad. If the
+                                     slider is used, start the test by pressing the Enter switch.
+
+                                     These are the test options:
+
+                                            1        Bank RAM Test
+                                            2        GRAM Test
+                                            3        RS422 Test
+                                            4        Write/Verify Fl Test
+                                            5        Verify Floppy Test
+                                            6        Panel Test
+                                            7        Adjust Features
+                                            8        HD Diagnostics
+                                            9        Serial Number
+
+
+
+
+© 1990 E-mu Systems Inc.                                                                   Page 3
+Emax II Diagnostics and Functional Test Procedures
+
+
+
+1      Bank RAM Test
+       This tests the bank portion of the Emax II’s main processor
+       (32CG16) RAM. This is the same RAM that the diagnostics
+       are running from, so this RAM probably has to be working in
+       order for the test to run in the first place!
+       When this test is selected, the display will say:
+
+               Testing BANK RAM
+
+
+       When this test passes, the display says:
+
+               BANK RAM Passed
+
+
+
+2      G-RAM Test
+       This tests the Emax II’s Sound RAM. The test makes two
+       passes of writing, then reading from RAM. If an error is
+       found, the display shows:
+
+                is:HHHH sb:HHHH
+               IC#??addr: HHHHH
+
+
+       The top line of the display shows what the data is and what
+       is should be. The address of the error is shown on the
+       bottom line.
+
+       The IC# display is a great idea in theory, but unfortunately, it
+       does not work. E-mu Systems never got it to work. Oh, well!
+       Since there are not that many memory chips in the Emax II,
+       the bad IC can be found quickly by first determining which bit
+       is bad (convert Hex-to-binary) and then swapping around the
+       chips corresponding to that bit.
+
+       This is a very thorough memory test, which should be able to
+       find any type of memory error.
+
+
+
+
+© 1990 E-mu Systems Inc.                                                  Page 4
+Emax II Diagnostics and Functional Test Procedures
+
+
+
+                             MEMORY TROUBLESHOOTING CHART
+
+                             Main Board 256k byte RAM’s
+
+                                    Bits             0-3    4-7   8 - 11   12 - 15
+                                                      46     47       48        49
+                                    IC#               50     51       52        53
+                                                      56     57       58        59
+                                                      60     61       62        63
+
+
+                             Main Board 64K RAM’s
+
+                                    Bits              0-3   4-7   8 - 11 12 - 15
+                                                       64    65       66      67
+                                                       68    69       70      71
+                                                       73    74       75      76
+                                    IC #               77    78       79      80
+                                                       82    83       84      85
+                                                       86    87       88      89
+                                                       92    93       94      95
+                                                       96    97       98      99
+
+
+                             Memory Expansion Board
+
+                                    Bits              0-3   4-7   8 - 11 12 - 15
+                                                        4     3        2       1
+                                                        8     7        6       5
+                                                       12    11       10       9
+                                                       16    15       14      13
+                                                       20    19       18      17
+                                    IC#                24    23       22      21
+                                                       28    27       26      25
+                                                       32    31       30      29
+                                                       36    35       34      33
+                                                       40    39       38      37
+                                                       44    43       42      41
+                                                       48    47       46      45
+
+
+
+
+© 1990 E-mu Systems Inc.                                                             Page 5
+Emax II Diagnostics and Functional Test Procedures
+
+
+
+                             3        RS422 Test
+                                     This test writes and reads an AA and then a 55 to the RS422
+                                     port. The test waits a reasonable length of time for each
+                                     response. If there is no response, it records a timeout error.
+                                     In order for the test to work, a jumper plug must be inserted
+                                     into the RS422 jack on the back panel. The LED’s show that
+                                     the 500KHz clock is running. If you do not wish to make the
+                                     test plug, simply connect pins 4 and 8, and pins 5 and 9
+                                     together with clip leads. To test the 500KHz dock, monitor
+                                     pin 7 with your oscilloscope. This test also checks most of
+                                     the MIDI circuitry as well as RS422 since they both share the
+                                     same UART. See the functional test procedure for a
+                                     dedicated MIDI test.
+
+
+                                     Construction of the RS422 Test Plug:
+                                     This will come in handy if you plan to repair many Emax’s. It
+                                     allows you to test the UART and Clock in one operation. To
+                                     build the test plug, you will need: A 9 pin D-type female
+                                     RS422 connector, 2 LED's, and 2 small pieces of wire. Wire
+                                     the test plug as shown in the diagram below.
+
+
+
+
+                                                        RS-422 Test
+                                                           Plug
+
+                             4       Floppy Write/Verify Test
+                                     This test writes and reads worst-case data patterns in a
+                                     butterfly seek pattern. It starts at the OD (outside diameter)
+                                     of the disk, jumps to the ID (inside diameter), and then back
+                                     to 1 track in from the OD, 1 track in from the ID, etc. etc. The
+                                     display shows the number of passes, hard and soft errors.
+                                     Use a blank formatted Emax II disk, as this test is destructive
+                                     to disk data. A reminder prompt is given upon entry to this
+                                     test. The test runs until the disk is removed.
+
+
+© 1990 E-mu Systems Inc.                                                                      Page 6
+Emax II Diagnostics and Functional Test Procedures
+
+
+5      Floppy Verify Test
+       This test requires a disk that has been run through at least one
+       pass of the Write/Verify test (test #4). It runs a butterfly pattern
+       while verifying the data as in the previous test.
+
+                               Pass = Test Passes
+           ERRORS             Hard = 2 Passes Failed
+                               Soft = 1 Pass Failed, 1 Pass Good
+
+
+6      Panel Test
+       All the panel buttons will either toggle the corresponding LED or
+       display their value on the screen if there is no LED. Pressing
+       ENTER twice in succession, exits the test.
+
+7      Adjust Features
+       This function allows a technician in the field to restore software
+       dependent features (such as memory size and stereo sampling) in
+       cases where the EEPROM has been erased or damaged. If you
+       have an Emax II that has forgotten what options it has, call the
+       factory for instructions.
+
+8      HD Diagnostics
+
+                  HD Diagnostics
+                   [1 - 6] / Slider
+
+       1       HD Select Drive
+               Allows you to select any currently mounted drive.
+
+       2       HD Read Only - Non-Destructive
+               Exercises (reads) the entire HD media for data read errors.
+               Runs continuously. Press and hold ENTER to quit. Exiting
+               the drive in this manner sets the drive error correction to ON.
+
+       3       HD Read/Reassign - Potentially Destructive.
+               Same as Read Only, but first turns error correction OFF and
+               re-assigns bad blocks using the drive block assignment.
+
+       4       HD Write/Read/Reass
+               DESTROYS ALL DATA! Exercises the entire HD media by
+               writing a test pattern, reading it back, and comparing. Runs
+               continuously. Drive must be reformatted after this test with
+               the Emax II format disk utility. This installs the file system to
+               allow the Emax II to recognize the drive. Press and hold
+               ENTER to quit.
+
+© 1990 E-mu Systems Inc.                                                           Page 7
+Emax II Diagnostics and Functional Test Procedures
+
+
+
+                                     5      HD Error Correct
+                                            Allows investigation and change of the drive error
+                                            correction state. Should be set to ON after the
+                                            diagnostics are completed.
+
+                                     6      HD Result
+                                            SCSI Sense Key and Sense Code, Sector Number
+                                            and Status of the last HD operation.
+
+                                     7      HD Media Defect
+                                            Displays the HD's defect list in Hex.
+
+                                     8      Exit HD Diagns
+                                            Returns you to the Diagnostics submodule.
+
+
+
+                             9       Serial Number
+                                     This feature was originally intended to discourage theft by
+                                     entering the unit’s serial number into the EEPROM. The
+                                     feature was not implemented.
+
+
+
+
+© 1990 E-mu Systems Inc.                                                                    Page 8
+Emax II Diagnostics and Functional Test Procedures
+
+
+
+5      FUNCTIONAL TEST
+       This section describes part of the functional tests that are
+       performed on every Emax II before it leaves the factory. A
+       functional test can be performed to verify that a problem
+       exists or as a final test to verify that the unit is working
+       perfectly before you return it to the customer.
+
+
+               Equipment Needed:
+                    Amp and Headphones
+                    2 mono audio cables (w/phone plugs)
+                    MIDI Cable
+                    Sample source (radio, generator, mic.)
+                    Sync source
+                    RS422 test plug
+                    Foot pedal simulator
+                    Audio return plug (2)
+                    Footswitch
+                    Emax II Test Disk
+                    Scratch diskette
+
+
+
+FOOTPEDAL SIMULATOR AND AUDIO RETURN PLUG
+To test and calibrate the foot pedal input, either an Emax foot pedal
+or a foot pedal simulator is required. The audio return plug is useful
+for testing the submix outputs. Construction of the both devices is
+diagrammed below.
+
+
+
+
+© 1990 E-mu Systems Inc.                                                 Page 9
+Emax II Diagnostics and Functional Test Procedures
+
+
+
+                                   1.   DIAGNOSTIC TESTS
+
+                                        Perform Diagnostic Tests 1 - 4.
+                                        The Bank RAM Test
+                                        The GRAM Test
+                                        The RS422 Test (insert the RS422 test plug)
+                                        Test the Front Panel by pressing down on panel area of
+                                           keyboard units to test for flex related LCD problems.
+                                        Plug in the footswitch and check both footswitch jack
+                                           inputs.
+                                        Check the Memory Size. Clear memory - MASTER, 4.
+                                           Check memory remaining - MASTER, 2.
+
+                                                                 Sample         Preset
+                                                     1 Megabyte: 0524244        0028021
+                                                     2 Megabyte: 1048488        0028021
+                                                     3 Megabyte: 1572820        0028021
+                                                     4 Megabyte: 2097108        0028021
+                                                     5 Megabyte: 2621396        0028021
+                                                     6 Megabyte: 3145684        0028021
+                                                     7 Megabyte: 3669972        0028021
+                                                     8 Megabyte: 4194260        0028021
+Note: Pressure is not
+implemented, but pretend
+that it is. Also, leave a little
+dead space at the minimum          2.   CALIBRATIONS
+and maximum positions on                Calibrate pitch wheel, mod wheel, data slider, volume
+all settings.
+                                          slider and pedal. (MASTER,9,3). Use the foot pedal
+Patch the Main Outputs of                 simulator to check the A/D Pedal input.
+the Emax II into your stereo
+amplifier in preparation for            RECALIBRATE: Master 9,3,1.
+the next few tests.                       Move left wheel for minimum post value in display. Enter.
+                                          Rotate left wheel for maximum value. Enter. Return
+                                          wheel to center position. Enter. Yes. Enter.
+
+                                           Position the right wheel for minimum value. Enter. Rotate
+                                           right wheel for maximum value. Enter. Yes. Enter. Press
+                                           key hard and hold. Enter. Press key softly. Enter.
+                                           Release key. Yes. Enter. Plug in foot pedal simulator.
+                                           Move simulator to minimum value. Enter. Move to
+                                           maximum value. Enter, Yes. Enter. Move data slider to
+                                           minimum position. Enter.
+
+                                           Move data slider to maximum position. Enter. Yes. Enter.
+                                           Move volume slider to minimum position. Enter. Move
+                                           volume slider to maximum position. Yes. Master.
+
+
+© 1990 E-mu Systems Inc.                                                                     Page 10
+Emax II Diagnostics and Functional Test Procedures
+
+
+3.     FUNCTION CHECK (Keyboard Units)
+       Use Test Disk Preset 00.
+       Play keyboard and check volume fader.
+       Move left wheel and verify pitch change.
+       Press Preset Definition, 9. Play G3 repeatedly while
+         pushing 1,0 and 1,1. Listen and verify no pitch change.
+         Verify no vibrato with right wheel all the way down.
+
+4.     OUTPUT CHECK
+       (Test Disk Preset 02). Play keyboard and check
+         headphone and mono outputs.
+       (Test Disk Preset 13). Play G2 and verify sound moving
+         left and right through main outputs. Play at least 16
+         notes.
+       (Test Disk Preset 14). Insert two audio return plugs into
+         the Sub A outputs. Play the keyboard and listen for
+         left/right panning.
+       (Test Disk Preset 15). Insert two audio return plugs into    Note: If there are no plugs
+         Sub B outputs. Play the keyboard and listen for left/right   inserted into the Submix
+                                                                      Outputs, Emax II will sense
+         panning.                                                     this and the sound will be
+       (Test Disk Preset 16). Insert two audio return plugs into    directed to the Main Outs.
+         Sub C outputs. Play the keyboard and listen for left/right
+         panning.
+
+5.     MIDI CHECK
+       Use Test Disk Preset 07
+       Connect a MIDI cable between the MIDI In and MIDI Out
+          jacks of the Emax II.
+       Play G2 and hold it down.
+       Unplug one end of the MIDI cable and release G2. Verify
+          that the note sustains.
+       Re-insert the MIDI cable and play G2 to verify that the
+          note stops.
+
+6.     SYNC CHECK
+       Press sequencer Play. Verify that the sequence plays.
+       Turn amp volume down. Briefly insert one audio cable
+         into Clock Out jack and listen for buzzing sound. Press
+         Stop twice.
+       Press Sequencer Manage, 2. Move slider up to select
+         Click 24. Press sequencer Play. (Emax II is waiting for
+         external sync.)
+       Connect clock out from Drum Box or Signal generator
+         (approx. 50Hz) to Clock In on Emax II. The sequence
+         should start playing.
+
+
+
+© 1990 E-mu Systems Inc.                                                                  Page 11
+Emax II Diagnostics and Functional Test Procedures
+
+
+
+                                     Vary the external clock tempo and verify that Emax II
+                                       follows the tempo changes perfectly.
+
+                                     Unplug the sync input and verify that sequence stops.
+                                       Press Stop twice.
+
+                             Using the optimum sampling levels as shown will produce samples
+                             will the lowest possible amounts of noise and harmonic distortion.
+
+                             7.      SAMPLE CHECK
+                                     Press Master, 4, Yes, to erase memory.
+                                     Press Sample, 3 and set the sample rate to 39KHz.
+                                     Press 4. Select maximum sampling time.
+                                     Connect sample source (synth. signal generator, radio,
+                                       mic.) to sample input jack. If the Emax II is stereo, use a
+                                       stereo plug and select stereo sampling Sample, 2.
+                                     Press Sample, 1. Use the data slider to adjust the gain
+                                       for optimum level.
+
+                                     OPTIMUM SAMPLING LEVELS
+
+                                     Mono Emax II
+
+                                              Pri 01 G1 +00dB
+
+                                              ||||||||||||||||||||||||||||
+
+                                     Stereo Emax II
+
+                                              Stereo G1 +00dB
+                                              ||||||||||||||||||||||||||||
+                                              ||||||||||||||||||||||||||||
+
+                                     Press 7 to sample. Play sample for the entire duration
+                                       and listen for distortion and noise. The original key is
+                                       shown in display.
+
+                             8.      FINAL CHECK
+                                     Play the unit for a few minutes as a reward for your hard
+                                        efforts.
+                                     Reassemble. Shake unit and verify no loose parts.
+
+
+
+
+© 1990 E-mu Systems Inc.                                                                   Page 12
+
