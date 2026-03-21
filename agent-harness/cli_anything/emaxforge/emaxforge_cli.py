@@ -29,6 +29,8 @@ from cli_anything.emaxforge.handlers.zuluscsi_config import ZuluSCSIConfig
 from cli_anything.emaxforge.handlers.catalog import CatalogParser
 from cli_anything.emaxforge.handlers.bank_templates import BankTemplates
 from cli_anything.emaxforge.handlers.fat_analyzer import FATAnalyzer
+from cli_anything.emaxforge.handlers.disk_clone import clone_disk
+from cli_anything.emaxforge.handlers.disk_validator import validate_disk
 
 
 @click.group()
@@ -161,6 +163,61 @@ def verify_disk_cmd(disk, verbose, output_json):
             click.echo(json.dumps({"error": str(e)}))
         else:
             click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("clone-disk")
+@click.option('--src', 'src_path', type=click.Path(exists=True), required=True,
+              help='Source disk (.hda / .EZ2)')
+@click.option('--dst', 'dst_path', type=click.Path(), required=True,
+              help='Destination path for the cloned disk')
+@click.option('--banks-only', is_flag=True, default=False,
+              help='Copy banks only (skip OS cluster) — creates a data-disk clone')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON result')
+def clone_disk_cmd(src_path, dst_path, banks_only, output_json):
+    """Clone a disk image bit-for-bit (EMXP Clone Disk equivalent).
+
+    Full clone:      identical byte-for-byte copy of the entire disk.
+    --banks-only:    copy BNT + bank cluster data only (skip OS cluster).
+    """
+    try:
+        last_pct = [-1]
+
+        def progress(done, total):
+            if output_json:
+                return
+            pct = int(done * 100 / total) if total else 0
+            if pct != last_pct[0] and pct % 10 == 0:
+                click.echo(f"  {pct}%...", nl=False)
+                last_pct[0] = pct
+
+        if not output_json:
+            mode_label = "banks-only" if banks_only else "full"
+            click.echo(f"🔁 Cloning ({mode_label}): {src_path} → {dst_path}")
+
+        result = clone_disk(
+            src_path=src_path,
+            dst_path=dst_path,
+            banks_only=banks_only,
+            progress_cb=progress,
+        )
+
+        if not output_json:
+            click.echo()  # newline after progress dots
+            size_mb = result['size_bytes'] / (1024 * 1024)
+            elapsed = result['elapsed_ms']
+            click.echo(f"✅ Clone complete — {size_mb:.1f} MB in {elapsed} ms")
+            if banks_only:
+                click.echo(f"   Banks copied: {result.get('banks_copied', 0)}")
+            click.echo(f"   Destination:  {result['dst']}")
+        else:
+            click.echo(json.dumps(result, indent=2))
+
+    except Exception as e:
+        if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Clone failed: {e}", err=True)
         sys.exit(1)
 
 
