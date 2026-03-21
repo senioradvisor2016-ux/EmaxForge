@@ -1,6 +1,27 @@
 """
 EMAX II Disk Catalog Parser
 Parses catalog entries from disk images
+
+Verified EMAX II disk layout (confirmed Mar 2026):
+  Header sector 0 (512 bytes):
+    0x04: clusterSize (U32LE, bytes directly — e.g. 489472 for 239 MB)
+    0x08: fatSectors (U32LE)
+    0x10: bntStartSector (U32LE)
+    0x14: maxBanks (U32LE)
+    0x20: caStartSector (U32LE)
+
+  BNT: bntStartSector * 512, 32 bytes/entry:
+    [0-11]:  name (ASCII, null/space-padded)
+    [12-17]: padding
+    [18-19]: startCluster (U16LE) — 1-based cluster index
+    [20-21]: clusterCount (U16LE)
+    [22-23]: f22 (U16LE)
+    [24-25]: f24 (U16LE)
+    [26-27]: flags (U16LE, 0x0081 = active bank, 0x7800 = OS)
+    [28-31]: zeros
+
+  Cluster addressing (1-based):
+    byte_offset = caStartSector*512 + (cluster-1)*clusterSize
 """
 
 import struct
@@ -8,193 +29,152 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 
+def _read_emax_header(disk_path: str) -> dict:
+    """Read and parse EMAX II disk header (sector 0)."""
+    with open(disk_path, 'rb') as f:
+        hdr = f.read(512)
+
+    if len(hdr) < 0x28:
+        raise ValueError("File too small for EMAX II header")
+
+    return {
+        'clusterSize':    struct.unpack_from('<I', hdr, 0x04)[0],
+        'fatSectors':     struct.unpack_from('<I', hdr, 0x08)[0],
+        'bntStartSector': struct.unpack_from('<I', hdr, 0x10)[0],
+        'maxBanks':       struct.unpack_from('<I', hdr, 0x14)[0],
+        'caStartSector':  struct.unpack_from('<I', hdr, 0x20)[0],
+    }
+
+
 class CatalogEntry:
-    """Single catalog entry (OS or bank)"""
-    
-    def __init__(self, index: int, data: bytes):
+    """Single BNT catalog entry (OS or bank) — 32 bytes."""
+
+    def __init__(self, index: int, data: bytes, cluster_size: int = 489472):
         self.index = index
         self.raw_data = data
-        
-        # Parse fields (64-byte entry)
-        self.name = self._parse_name(data[0:16])
-        self.cluster = struct.unpack('<H', data[16:18])[0]
-        self.size_clusters = struct.unpack('<H', data[18:20])[0]
-        self.flags = struct.unpack('<H', data[26:28])[0]
-        self.preset_count = data[28] if len(data) > 28 else 0
-        
-        # Computed
-        self.is_active = (self.flags & 0x0001) != 0
-        self.is_os = "EMAX" in self.name.upper() or "SOFTWARE" in self.name.upper()
-        self.is_empty = self.cluster == 0 or self.cluster == 0xFFFF
-    
-    def _parse_name(self, name_bytes: bytes) -> str:
-        """Parse name from catalog entry (null-terminated ASCII)"""
-        try:
-            # Find null terminator
-            null_idx = name_bytes.find(b'\x00')
-            if null_idx != -1:
-                name_bytes = name_bytes[:null_idx]
-            return name_bytes.decode('ascii', errors='ignore').strip()
-        except:
-            return ""
-    
-    def size_bytes(self, cluster_size: int) -> int:
-        """Calculate size in bytes"""
-        return self.size_clusters * cluster_size
-    
-    def size_mb(self, cluster_size: int) -> float:
-        """Calculate size in MB"""
+        self._cluster_size = cluster_size
+
+        # Verified offsets (32-byte BNT entry)
+        self.name          = data[0:12].rstrip(b'\x00 ').decode('ascii', errors='replace').strip()
+        self.start_cluster = struct.unpack_from('<H', data, 18)[0]
+        self.cluster_count = struct.unpack_from('<H', data, 20)[0]
+        self.f22           = struct.unpack_from('<H', data, 22)[0]
+        self.f24           = struct.unpack_from('<H', data, 24)[0]
+        self.flags         = struct.unpack_from('<H', data, 26)[0]
+
+        # Derived
+        self.is_active = self.flags in (0x0081, 0x7800) and self.start_cluster > 0
+        self.is_os     = self.flags == 0x7800
+        self.is_empty  = self.start_cluster == 0 or all(b == 0 for b in data)
+
+    def size_bytes(self, cluster_size: int = None) -> int:
+        cs = cluster_size or self._cluster_size
+        return self.cluster_count * cs
+
+    def size_mb(self, cluster_size: int = None) -> float:
         return self.size_bytes(cluster_size) / (1024 * 1024)
-    
-    def to_dict(self, cluster_size: int = 8192) -> Dict[str, Any]:
-        """Convert to dictionary"""
+
+    def to_dict(self, cluster_size: int = None) -> Dict[str, Any]:
+        cs = cluster_size or self._cluster_size
         return {
-            "index": self.index,
-            "name": self.name,
-            "cluster": self.cluster,
-            "size_clusters": self.size_clusters,
-            "size_bytes": self.size_bytes(cluster_size),
-            "size_mb": round(self.size_mb(cluster_size), 2),
-            "flags": hex(self.flags),
-            "preset_count": self.preset_count,
-            "is_active": self.is_active,
-            "is_os": self.is_os,
-            "is_empty": self.is_empty
+            "index":         self.index,
+            "name":          self.name,
+            "start_cluster": self.start_cluster,
+            "cluster_count": self.cluster_count,
+            "size_bytes":    self.size_bytes(cs),
+            "size_mb":       round(self.size_mb(cs), 2),
+            "flags":         f"0x{self.flags:04X}",
+            "is_active":     self.is_active,
+            "is_os":         self.is_os,
+            "is_empty":      self.is_empty,
         }
 
 
 class CatalogParser:
-    """Parse EMAX II disk catalog"""
-    
-    CATALOG_OFFSET = 0x600  # 1536 bytes from start
-    ENTRY_SIZE = 64
-    MAX_ENTRIES = 90  # standard (239 MB disk)
-    
+    """Parse EMAX II disk catalog (BNT)."""
+
+    ENTRY_SIZE = 32  # verified: 32 bytes per BNT slot
+
     @staticmethod
-    def parse(disk_path: str, max_entries: int = MAX_ENTRIES) -> List[CatalogEntry]:
-        """Parse all catalog entries from disk
-        
-        Args:
-            disk_path: Path to disk image
-            max_entries: Maximum entries to parse (default: 90)
-        
-        Returns:
-            List of CatalogEntry objects
-        """
+    def _get_geometry(disk_path: str) -> dict:
+        hdr = _read_emax_header(disk_path)
+        return {
+            'cluster_size': hdr['clusterSize'],
+            'bnt_offset':   hdr['bntStartSector'] * 512,
+            'ca_offset':    hdr['caStartSector'] * 512,
+            'max_slots':    hdr['maxBanks'] + 1,  # +1 for OS slot
+        }
+
+    @staticmethod
+    def get_cluster_size(disk_path: str) -> int:
+        """Get cluster size from header offset 0x04 (U32LE, bytes)."""
+        hdr = _read_emax_header(disk_path)
+        cs = hdr['clusterSize']
+        if cs == 0 or cs > 0x200000:
+            raise ValueError(f"Unexpected cluster size: {cs}")
+        return cs
+
+    @staticmethod
+    def parse(disk_path: str) -> List[CatalogEntry]:
+        """Parse all BNT entries from disk."""
         path = Path(disk_path)
         if not path.exists():
             raise FileNotFoundError(f"Disk not found: {disk_path}")
-        
+
+        geo = CatalogParser._get_geometry(disk_path)
+        cs  = geo['cluster_size']
         entries = []
-        
+
         with open(path, 'rb') as f:
-            f.seek(CatalogParser.CATALOG_OFFSET)
-            
-            for i in range(max_entries):
-                entry_data = f.read(CatalogParser.ENTRY_SIZE)
-                if len(entry_data) < CatalogParser.ENTRY_SIZE:
+            f.seek(geo['bnt_offset'])
+            for i in range(geo['max_slots']):
+                data = f.read(CatalogParser.ENTRY_SIZE)
+                if len(data) < CatalogParser.ENTRY_SIZE:
                     break
-                
-                entry = CatalogEntry(i, entry_data)
-                entries.append(entry)
-        
+                entries.append(CatalogEntry(i, data, cs))
+
         return entries
-    
+
     @staticmethod
-    def list_banks(disk_path: str, include_os: bool = False, 
+    def list_banks(disk_path: str, include_os: bool = False,
                    include_empty: bool = False) -> List[CatalogEntry]:
-        """List only bank entries (filter OS and empty)
-        
-        Args:
-            disk_path: Path to disk image
-            include_os: Include OS entries (default: False)
-            include_empty: Include empty entries (default: False)
-        
-        Returns:
-            Filtered list of CatalogEntry objects
-        """
+        """List bank entries with optional filters."""
         entries = CatalogParser.parse(disk_path)
-        filtered = []
-        
-        for entry in entries:
-            # Skip empty
-            if not include_empty and entry.is_empty:
+        result = []
+        for e in entries:
+            if e.is_empty and not include_empty:
                 continue
-            
-            # Skip OS
-            if not include_os and entry.is_os:
+            if e.is_os and not include_os:
                 continue
-            
-            # Skip inactive
-            if not entry.is_active:
+            if not e.is_active:
                 continue
-            
-            filtered.append(entry)
-        
-        return filtered
-    
+            result.append(e)
+        return result
+
     @staticmethod
     def get_os_entry(disk_path: str) -> Optional[CatalogEntry]:
-        """Get OS catalog entry
-        
-        Args:
-            disk_path: Path to disk image
-        
-        Returns:
-            CatalogEntry for OS or None
-        """
-        entries = CatalogParser.parse(disk_path)  # Parse all entries
-        
-        for entry in entries:
-            if entry.is_os and entry.is_active and not entry.is_empty:
-                return entry
-        
+        """Return OS BNT entry (flags == 0x7800) or None."""
+        for e in CatalogParser.parse(disk_path):
+            if e.is_os and e.is_active:
+                return e
         return None
-    
-    @staticmethod
-    def get_cluster_size(disk_path: str) -> int:
-        """Get cluster size from disk header
-        
-        Args:
-            disk_path: Path to disk image
-        
-        Returns:
-            Cluster size in bytes
-        """
-        with open(disk_path, 'rb') as f:
-            f.seek(0x0C)
-            blocks = struct.unpack('<I', f.read(4))[0]
-            return int(blocks) * 8192
-    
+
     @staticmethod
     def summary(disk_path: str) -> Dict[str, Any]:
-        """Get catalog summary
-        
-        Args:
-            disk_path: Path to disk image
-        
-        Returns:
-            {
-                "total_entries": int,
-                "active_entries": int,
-                "bank_count": int,
-                "os_entry": dict or None,
-                "cluster_size": int,
-                "entries": [dict]
-            }
-        """
-        cluster_size = CatalogParser.get_cluster_size(disk_path)
-        all_entries = CatalogParser.parse(disk_path)
-        
-        active = [e for e in all_entries if e.is_active and not e.is_empty]
-        banks = [e for e in active if not e.is_os]
-        os_entry = CatalogParser.get_os_entry(disk_path)
-        
+        """Return full catalog summary dict."""
+        geo      = CatalogParser._get_geometry(disk_path)
+        cs       = geo['cluster_size']
+        all_ents = CatalogParser.parse(disk_path)
+
+        active   = [e for e in all_ents if e.is_active and not e.is_empty]
+        banks    = [e for e in active   if not e.is_os]
+        os_entry = next((e for e in active if e.is_os), None)
+
         return {
-            "total_entries": len(all_entries),
+            "total_entries":  len(all_ents),
             "active_entries": len(active),
-            "bank_count": len(banks),
-            "os_entry": os_entry.to_dict(cluster_size) if os_entry else None,
-            "cluster_size": cluster_size,
-            "entries": [e.to_dict(cluster_size) for e in active]
+            "bank_count":     len(banks),
+            "cluster_size":   cs,
+            "os_entry":       os_entry.to_dict(cs) if os_entry else None,
+            "entries":        [e.to_dict(cs) for e in active],
         }

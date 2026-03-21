@@ -54,37 +54,34 @@ def _read_header(f):
 
 def _geo(hdr, disk_size_bytes):
     """Compute derived geometry.
-    
-    clusterSize is NOT stored in the header (0x04 is disk size in sectors).
-    Computed as: (diskSizeSectors - caStartSector) / totalClusters * 512
-    Verified against EmaxII-02.ez2 (64 KB/cluster) and 239 MB disk (256 KB/cluster).
+
+    cluster_size is at header offset 0x04 (U32LE, raw bytes).
+    Verified for 239 MB disk: 0x04 = 489472 bytes = 478 KB/cluster.
     """
-    fat_offset  = 0x400  # ALWAYS
-    fat_size    = hdr['fatSectors'] * 512
-    bnt_offset  = hdr['bntStartSector'] * 512
-    ca_offset   = hdr['caStartSector'] * 512
-    bnt_size    = ca_offset - bnt_offset
-    max_slots   = min(hdr['maxBanks'] + 1, bnt_size // 32)
-    
-    # Compute actual cluster size from disk geometry
-    disk_size_sectors = disk_size_bytes // 512
+    fat_offset   = 0x400   # FAT always starts at 0x400
+    fat_size     = hdr['fatSectors'] * 512
+    bnt_offset   = hdr['bntStartSector'] * 512
+    ca_offset    = hdr['caStartSector'] * 512
+    bnt_size     = ca_offset - bnt_offset
+    max_slots    = min(hdr['maxBanks'] + 1, bnt_size // 32)
+    cluster_size = hdr['clusterSize']  # directly from header[0x04]
+
+    if cluster_size == 0 or cluster_size > 0x200000:
+        raise ValueError(f"Invalid cluster size from header: {cluster_size}")
+
     total_clusters = hdr['totalClusters']
-    if total_clusters > 0:
-        sects_per_cluster = (disk_size_sectors - hdr['caStartSector']) // total_clusters
-    else:
-        sects_per_cluster = 128  # fallback: 64 KB
-    cluster_size = sects_per_cluster * 512
-    
+    sects_per_cluster = cluster_size // 512
+
     return {
-        'fat_offset':    fat_offset,
-        'fat_size':      fat_size,
-        'bnt_offset':    bnt_offset,
-        'bnt_size':      bnt_size,
-        'ca_offset':     ca_offset,
-        'max_slots':     max_slots,
-        'cluster_size':  cluster_size,
+        'fat_offset':        fat_offset,
+        'fat_size':          fat_size,
+        'bnt_offset':        bnt_offset,
+        'bnt_size':          bnt_size,
+        'ca_offset':         ca_offset,
+        'max_slots':         max_slots,
+        'cluster_size':      cluster_size,
         'sects_per_cluster': sects_per_cluster,
-        'total_clusters': total_clusters,
+        'total_clusters':    total_clusters,
     }
 
 
@@ -116,15 +113,14 @@ def _parse_bnt_entry(bnt_data, slot):
     if all(b == 0xFF for b in entry):
         return None
     
-    name = entry[0:14].decode('ascii', errors='replace').rstrip('\x00 ')
-    # Layout verified against EmaxII-02.ez2 (Mar 19, 2026):
+    # Verified BNT entry offsets (32 bytes, Mar 2026):
+    name = entry[0:12].decode('ascii', errors='replace').rstrip('\x00 ')
     return {
         'name':         name,
-        'startCluster': struct.unpack_from('<H', entry, 16)[0],
-        'clusterCount': struct.unpack_from('<H', entry, 18)[0],
-        'numPresets':   struct.unpack_from('<H', entry, 20)[0],
+        'startCluster': struct.unpack_from('<H', entry, 18)[0],
+        'clusterCount': struct.unpack_from('<H', entry, 20)[0],
         'f22':          struct.unpack_from('<H', entry, 22)[0],
-        'idx':          struct.unpack_from('<H', entry, 24)[0],
+        'f24':          struct.unpack_from('<H', entry, 24)[0],
         'flags':        struct.unpack_from('<H', entry, 26)[0],
     }
 
@@ -193,7 +189,8 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         raise FileNotFoundError(f"Bank not found: {bank_path}")
     
     bank_data = bank_file.read_bytes()
-    bank_name = bank_file.stem[:14]
+    # Convert filename back to bank name: underscore → space (EMXP uses _ as / replacement)
+    bank_name = bank_file.stem.replace("_", " ")[:12]
     
     with open(disk, 'r+b') as f:
         hdr = _read_header(f)
@@ -222,6 +219,7 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         first_cluster_idx = allocated[0]
         
         # Write bank data contiguously
+        # Cluster addressing is 1-based: cluster n → ca_offset + (n-1)*clusterSize
         ca_bytes = g['ca_offset']
         for i in range(clusters_needed):
             chunk_start = i * cs
@@ -229,9 +227,9 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
             chunk = bank_data[chunk_start:chunk_end]
             if len(chunk) < cs:
                 chunk = chunk + b'\x00' * (cs - len(chunk))
-            
+
             cl_idx = first_cluster_idx + i
-            offset = ca_bytes + cl_idx * cs
+            offset = ca_bytes + (cl_idx - 1) * cs  # 1-based!
             f.seek(offset)
             f.write(chunk)
         
@@ -246,29 +244,26 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         f.seek(g['fat_offset'])
         f.write(fat)
         
-        # BNT entry (32 bytes)
+        # BNT entry (32 bytes) — verified offsets (Mar 2026):
+        #   [0-11]:  name (12 bytes ASCII, null-padded)
+        #   [12-17]: padding / zeros
+        #   [18-19]: startCluster (U16LE) — 1-based cluster index
+        #   [20-21]: clusterCount (U16LE)
+        #   [22-23]: f22 (U16LE, 0)
+        #   [24-25]: f24 (U16LE, 0)
+        #   [26-27]: flags (U16LE, 0x0081 = active bank)
+        #   [28-31]: zeros
         entry = bytearray(32)
-        name_bytes = bank_name.encode('ascii', errors='replace').ljust(14, b' ')[:14]
-        entry[0:14] = name_bytes
-        entry[14:16] = b'\x00\x00'
-        
-        # startCluster: sector number relative to cluster area
-        # Formula: first_cluster_idx * sects_per_cluster
-        # Example: cluster 60 @ 128 sects/cluster → startCluster=0x1E00 (7680)
-        start_sector = first_cluster_idx * g['sects_per_cluster']
-        if start_sector > 65535:
-            raise ValueError(f"Bank cluster {first_cluster_idx} exceeds 16-bit addressing "
-                           f"(start_sector={start_sector}, max=65535)")
-        struct.pack_into('<H', entry, 16, start_sector)
-        
-        # sectorCount: SIZE IN SECTORS (not clusters!)
-        # Verified: LIBRARYCOMBO 15 MB = cnt=236 sects = 118 KB, NOT 236 clusters
-        struct.pack_into('<H', entry, 18, sectors_needed)
-        
-        struct.pack_into('<H', entry, 20, 0)      # numPresets
-        struct.pack_into('<H', entry, 22, 0x0068) # flags (EMAX II validates this — 0x0000 = "not formatted")
-        struct.pack_into('<H', entry, 24, (slot - 1) * 0x200)  # idx
-        struct.pack_into('<H', entry, 26, 0x0081) # secondary flags (observed in EmaxII-02.ez2)
+        name_bytes = bank_name.encode('ascii', errors='replace').ljust(12, b'\x00')[:12]
+        entry[0:12] = name_bytes
+        # 12-17: zeros (already)
+
+        struct.pack_into('<H', entry, 18, first_cluster_idx)   # startCluster (1-based)
+        struct.pack_into('<H', entry, 20, clusters_needed)      # clusterCount
+        struct.pack_into('<H', entry, 22, 0)                    # f22 = 0
+        struct.pack_into('<H', entry, 24, 0)                    # f24 = 0
+        struct.pack_into('<H', entry, 26, 0x0081)               # flags = active bank
+        # 28-31: zeros (already)
         
         bnt_entry_offset = g['bnt_offset'] + (slot * 32)
         f.seek(bnt_entry_offset)
