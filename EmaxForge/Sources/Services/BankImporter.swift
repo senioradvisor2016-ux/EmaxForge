@@ -14,10 +14,15 @@ import Foundation
 ///   [16-17]: idx (bank preset address, 0x0000 for bank 1, varies; set to 0 on import)
 ///   [18-19]: start cluster (LE, 0-based cluster number in cluster area)
 ///   [20-21]: cluster count (must match FAT chain length)
-///   [22-23]: f22 (varies, set to 0 on import)
-///   [24-25]: f24 (varies, set to 0 on import)
+///   [22-23]: f22 (unknown EMAX II metadata; range 0-127; set to 0 on import — verified safe)
+///   [24-25]: f24 (unknown EMAX II metadata; range 0-508; set to 0 on import — verified safe)
 ///   [26-27]: flags = 0x0081 (ALWAYS)
 ///   [28-31]: zeros
+///
+/// NOTE: f22/f24 are preserved when reading disks but written as 0x0000 on import.
+/// Analysis (Mar 21 2026) shows no correlation to bank size, cluster count, or preset count.
+/// Current hypothesis: EMAX II runtime metadata (caching hints) or EMXP-specific fields.
+/// EmaxForge-created disks with f22=f24=0 work correctly — fields are not critical for boot/load.
 ///
 /// Cluster offset formula: ca_off + cluster * clusterSize  (0-based)
 class BankImporter {

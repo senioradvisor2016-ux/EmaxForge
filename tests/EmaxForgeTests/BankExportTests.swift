@@ -136,7 +136,7 @@ final class BankExportTests: XCTestCase {
         let bankName = "STRINGS"
         let out      = dir.appendingPathComponent(bankName + ".EB2")
         XCTAssertEqual(out.lastPathComponent, "STRINGS.EB2")
-        XCTAssertEqual(out.deletingLastPathComponent(), dir)
+        XCTAssertEqual(out.deletingLastPathComponent().path, dir.path)
     }
 
     func testMultipleBanksProduceSeparateFiles() {
