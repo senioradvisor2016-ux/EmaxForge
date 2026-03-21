@@ -33,6 +33,7 @@ from cli_anything.emaxforge.handlers.disk_clone import clone_disk
 from cli_anything.emaxforge.handlers.disk_validator import validate_disk
 from cli_anything.emaxforge.handlers.bulk_import import bulk_import, collect_eb2_files
 from cli_anything.emaxforge.handlers.bank_mover import move_bank
+from cli_anything.emaxforge.handlers.disk_repair import repair_disk, format_repair_report
 
 
 @click.group()
@@ -285,6 +286,75 @@ def move_bank_cmd(src_path, dst_path, bank_name, dst_bank_name, mode, output_jso
         else:
             click.echo(f"❌ {result.get('error')}", err=True)
             sys.exit(1)
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("repair-disk")
+@click.option('--disk', type=click.Path(exists=True), required=True,
+              help='Disk image to repair (.hda)')
+@click.option('--output', 'dst_path', type=click.Path(), default=None,
+              help='Write repaired disk here (default: in-place)')
+@click.option('--dry-run', is_flag=True, default=False,
+              help='Show what would be repaired without writing')
+@click.option('--verbose', '-v', is_flag=True,
+              help='Show every individual fix action')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def repair_disk_cmd(disk, dst_path, dry_run, verbose, output_json):
+    """Repair disk image: free orphan clusters, fix broken FAT chains, correct BNT counts.
+
+    \b
+    Safe: never touches cluster data — only FAT entries and BNT metadata.
+    Use --dry-run first to preview all repairs before applying.
+
+    Examples:
+      # Preview repairs
+      cli-anything-emaxforge repair-disk --disk HD10.hda --dry-run
+
+      # Repair in-place
+      cli-anything-emaxforge repair-disk --disk HD10.hda
+
+      # Repair to new file (leave original untouched)
+      cli-anything-emaxforge repair-disk --disk HD10.hda --output HD10_repaired.hda
+    """
+    try:
+        if not output_json and not dry_run and dst_path is None:
+            click.echo(f"⚠️  Repairing in-place: {disk}")
+            click.echo("   (use --output to write a copy instead)")
+            click.echo()
+
+        report = repair_disk(
+            disk_path=disk,
+            dst_path=dst_path,
+            dry_run=dry_run,
+        )
+
+        if output_json:
+            import dataclasses
+            out = {
+                'disk_path':        report.disk_path,
+                'dry_run':          report.dry_run,
+                'total_clusters':   report.total_clusters,
+                'orphans_freed':    report.orphans_freed,
+                'chains_truncated': report.chains_truncated,
+                'bnt_counts_fixed': report.bnt_counts_fixed,
+                'duplicate_names':  report.duplicate_names,
+                'total_fixes':      report.total_fixes,
+                'elapsed_ms':       report.elapsed_ms,
+                'actions': [
+                    {'kind': a.kind, 'cluster': a.cluster,
+                     'slot': a.slot, 'bank_name': a.bank_name, 'detail': a.detail}
+                    for a in report.actions
+                ],
+            }
+            click.echo(__import__('json').dumps(out, indent=2))
+        else:
+            click.echo(format_repair_report(report, verbose=verbose))
 
     except Exception as e:
         if output_json:
