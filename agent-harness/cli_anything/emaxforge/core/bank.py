@@ -191,8 +191,13 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         raise FileNotFoundError(f"Bank not found: {bank_path}")
     
     bank_data = bank_file.read_bytes()
-    # Convert filename to bank name: underscore → space, uppercase (EMXP always uses CAPS)
-    bank_name = bank_file.stem.replace("_", " ").upper()[:14]
+    # Derive bank name from filename.
+    # Strip leading "slotN_" prefix if present (e.g. "slot1_STEEL_DRUMS" → "STEEL_DRUMS")
+    import re as _re
+    stem = bank_file.stem
+    stem = _re.sub(r'^slot\d+_', '', stem, flags=_re.IGNORECASE)
+    # Preserve original case from filename (underscores → spaces), truncate to 14 chars
+    bank_name = stem.replace("_", " ")[:14]
     
     with open(disk, 'r+b') as f:
         hdr = _read_header(f)
