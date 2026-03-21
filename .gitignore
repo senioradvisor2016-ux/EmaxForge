@@ -2,11 +2,13 @@
 .build/
 *.xcodeproj
 *.xcworkspace
+DerivedData/
 
 # macOS
 .DS_Store
 *.swp
 *.swo
+._*
 
 # Python
 __pycache__/
@@ -16,36 +18,34 @@ venv/
 *.egg-info/
 dist/
 
-# Test artifacts
-/tmp/
+# Disk images (large!)
 *.hda
 *.ez2
+*.EZ2
 *.img
 *.hfe
 
-# Except reference images
-!tests/reference/*.hda
-!tests/reference/*.ez2
+# Except bootable templates (needed for app)
+!EmaxForge/Resources/bootable_templates/*.EZ2
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# Test artifacts
+test_images/
+edge-case-tests/
+test_output/
+emaxforge-test/
+test_screenshots/
+test-screenshots/
+SD_BOOT2/
+
+# Ghidra (can be recreated)
+ghidra/
 
 # Release builds
 EmaxForge.app
 EmaxForge-*.zip
 CHECKSUMS.txt
-
-# Binary/large files - not for git
-*.hda
-*.dmg
-*.zip
-*.gzf
-*.gbf
-*.bak
-*.backup
-*.exe
-*.EZ2.bak
-*.EZ2.backup
-SD_BOOT2/
-test_images/
-test_output/
-new boot/
-emaxforge-test/
-ghidra/EmaxProject.rep/
