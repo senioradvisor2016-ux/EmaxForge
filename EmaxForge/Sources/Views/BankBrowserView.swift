@@ -271,6 +271,37 @@ struct BankBrowserView: View {
             
             Spacer()
             
+            // Multi-select batch toolbar (issue #4)
+            if selectedBanks.count > 1 {
+                HStack(spacing: 8) {
+                    Text("\(selectedBanks.count) selected")
+                        .font(.caption.bold())
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Theme.accent.opacity(0.15), in: Capsule())
+                    
+                    Button {
+                        batchExportBanks()
+                    } label: {
+                        Label("Export All", systemImage: "square.and.arrow.up.on.square")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.cyan)
+                    
+                    Button(role: .destructive) {
+                        showBatchDeleteConfirm = true
+                    } label: {
+                        Label("Delete All", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+                
+                Divider()
+                    .frame(height: 20)
+            }
+            
             // Export banks button (issue #1)
             Button {
                 showExportBanks = true
