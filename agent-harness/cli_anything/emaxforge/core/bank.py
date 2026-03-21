@@ -113,10 +113,12 @@ def _parse_bnt_entry(bnt_data, slot):
     if all(b == 0xFF for b in entry):
         return None
     
-    # Verified BNT entry offsets (32 bytes, Mar 2026):
-    name = entry[0:12].decode('ascii', errors='replace').rstrip('\x00 ')
+    # Verified BNT entry offsets (32 bytes, against HD10.hda Mar 2026):
+    # name is 14 bytes, SPACE-padded (not null-padded!)
+    name = entry[0:14].decode('ascii', errors='replace').rstrip('\x00 ')
     return {
         'name':         name,
+        'idx':          struct.unpack_from('<H', entry, 16)[0],
         'startCluster': struct.unpack_from('<H', entry, 18)[0],
         'clusterCount': struct.unpack_from('<H', entry, 20)[0],
         'f22':          struct.unpack_from('<H', entry, 22)[0],
@@ -189,8 +191,8 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         raise FileNotFoundError(f"Bank not found: {bank_path}")
     
     bank_data = bank_file.read_bytes()
-    # Convert filename back to bank name: underscore → space (EMXP uses _ as / replacement)
-    bank_name = bank_file.stem.replace("_", " ")[:12]
+    # Convert filename to bank name: underscore → space, uppercase (EMXP always uses CAPS)
+    bank_name = bank_file.stem.replace("_", " ").upper()[:14]
     
     with open(disk, 'r+b') as f:
         hdr = _read_header(f)
@@ -244,24 +246,27 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         f.seek(g['fat_offset'])
         f.write(fat)
         
-        # BNT entry (32 bytes) — verified offsets (Mar 2026):
-        #   [0-11]:  name (12 bytes ASCII, null-padded)
-        #   [12-17]: padding / zeros
-        #   [18-19]: startCluster (U16LE) — 1-based cluster index
+        # BNT entry (32 bytes) — verified against HD10.hda (EMXP-created, Mar 2026):
+        #   [0-13]:  name (14 bytes ASCII, SPACE-padded — NOT null!)
+        #   [14-15]: zeros
+        #   [16-17]: idx (U16LE): (slot-1)*0x100 for banks; 0x7800 for OS
+        #   [18-19]: startCluster (U16LE, 1-based)
         #   [20-21]: clusterCount (U16LE)
-        #   [22-23]: f22 (U16LE, 0)
-        #   [24-25]: f24 (U16LE, 0)
+        #   [22-23]: f22 (U16LE, 0 on import — EMAX II writes runtime state here)
+        #   [24-25]: f24 (U16LE, 0 on import)
         #   [26-27]: flags (U16LE, 0x0081 = active bank)
         #   [28-31]: zeros
         entry = bytearray(32)
-        name_bytes = bank_name.encode('ascii', errors='replace').ljust(12, b'\x00')[:12]
-        entry[0:12] = name_bytes
-        # 12-17: zeros (already)
+        name_bytes = bank_name.encode('ascii', errors='replace').ljust(14, b' ')[:14]
+        entry[0:14] = name_bytes
+        # 14-15: zeros (already)
 
+        idx = (slot - 1) * 0x100  # bank slot idx pattern: slot1=0x0000, slot2=0x0100, ...
+        struct.pack_into('<H', entry, 16, idx)
         struct.pack_into('<H', entry, 18, first_cluster_idx)   # startCluster (1-based)
         struct.pack_into('<H', entry, 20, clusters_needed)      # clusterCount
-        struct.pack_into('<H', entry, 22, 0)                    # f22 = 0
-        struct.pack_into('<H', entry, 24, 0)                    # f24 = 0
+        struct.pack_into('<H', entry, 22, 0)                    # f22 = 0 (EMAX II updates this)
+        struct.pack_into('<H', entry, 24, 0)                    # f24 = 0 (EMAX II updates this)
         struct.pack_into('<H', entry, 26, 0x0081)               # flags = active bank
         # 28-31: zeros (already)
         

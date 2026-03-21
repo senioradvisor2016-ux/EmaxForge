@@ -54,17 +54,19 @@ class CatalogEntry:
         self.raw_data = data
         self._cluster_size = cluster_size
 
-        # Verified offsets (32-byte BNT entry)
-        self.name          = data[0:12].rstrip(b'\x00 ').decode('ascii', errors='replace').strip()
+        # Verified offsets (32-byte BNT entry, against HD10.hda Mar 2026)
+        # Name is 14 bytes SPACE-padded (not null-padded)
+        self.name          = data[0:14].rstrip(b'\x00 ').decode('ascii', errors='replace').strip()
+        self.idx           = struct.unpack_from('<H', data, 16)[0]
         self.start_cluster = struct.unpack_from('<H', data, 18)[0]
         self.cluster_count = struct.unpack_from('<H', data, 20)[0]
         self.f22           = struct.unpack_from('<H', data, 22)[0]
         self.f24           = struct.unpack_from('<H', data, 24)[0]
         self.flags         = struct.unpack_from('<H', data, 26)[0]
 
-        # Derived
-        self.is_active = self.flags in (0x0081, 0x7800) and self.start_cluster > 0
-        self.is_os     = self.flags == 0x7800
+        # Derived — OS has idx=0x7800; banks have idx=(slot-1)*0x100 and flags=0x0081
+        self.is_os     = self.idx == 0x7800
+        self.is_active = self.flags == 0x0081 and self.start_cluster > 0
         self.is_empty  = self.start_cluster == 0 or all(b == 0 for b in data)
 
     def size_bytes(self, cluster_size: int = None) -> int:
