@@ -186,18 +186,27 @@ def _estimate_entropy(data: bytes, offset: int, length: int = 256) -> float:
     return ent
 
 
-def _find_pcm_start_by_entropy(data: bytes, threshold: float = 6.5) -> Optional[int]:
+def _find_pcm_start_by_entropy(data: bytes, threshold: float = 6.0) -> Optional[int]:
     """
     Scan for the PCM data start in EB2 format.
-    PCM (audio) has higher entropy than headers (which have many zeros).
-    Starts scanning at 0x200, stepping 512 bytes.
+    PCM (audio) has higher entropy than pure-zero headers.
+    Starts at 0x200 (EB2 standard header size) — returns 0x200 if
+    entropy there already exceeds the threshold (most banks).
+    Falls back to scanning forward if 0x200 is pure header data.
     """
+    # Always try 0x200 first — EMXP EB2 export has a 512-byte header block
+    if len(data) > 0x200 + 256:
+        if _estimate_entropy(data, 0x200) >= threshold:
+            return 0x200
+
+    # Fallback: scan forward for higher-entropy region
     step = 512
-    for off in range(0x200, len(data) - 256, step):
+    for off in range(0x400, len(data) - 256, step):
         if _estimate_entropy(data, off) >= threshold:
-            # Fine-align: back up to nearest 512-byte boundary
             return (off // 512) * 512
-    return None
+
+    # Last resort: use 0x200
+    return 0x200
 
 
 def _extract_eb2(data: bytes, bank_name: str = '') -> List[SampleEntry]:
