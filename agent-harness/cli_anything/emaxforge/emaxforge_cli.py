@@ -34,6 +34,7 @@ from cli_anything.emaxforge.handlers.disk_validator import validate_disk
 from cli_anything.emaxforge.handlers.bulk_import import bulk_import, collect_eb2_files
 from cli_anything.emaxforge.handlers.bank_mover import move_bank
 from cli_anything.emaxforge.handlers.disk_repair import repair_disk, format_repair_report
+from cli_anything.emaxforge.handlers.bank_renamer import rename_bank
 
 
 @click.group()
@@ -283,6 +284,45 @@ def move_bank_cmd(src_path, dst_path, bank_name, dst_bank_name, mode, output_jso
                        f"({clusters} clusters / {mb:.1f} MB / {elapsed} ms)")
             if mode == 'move':
                 click.echo(f"   Removed from source slot {result['src_slot']}")
+        else:
+            click.echo(f"❌ {result.get('error')}", err=True)
+            sys.exit(1)
+
+    except Exception as e:
+        if output_json:
+            click.echo(__import__('json').dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("rename-bank")
+@click.option('--disk', type=click.Path(exists=True), required=True,
+              help='Disk image (.hda)')
+@click.option('--bank', 'old_name', required=True,
+              help='Current bank name (case-insensitive)')
+@click.option('--new-name', 'new_name', required=True,
+              help='New name (max 14 chars)')
+@click.option('--json', 'output_json', is_flag=True, help='Output JSON')
+def rename_bank_cmd(disk, old_name, new_name, output_json):
+    """Rename a bank in-place on a disk image.
+
+    \b
+    Edits the 14-byte name field in the BNT directly — no export/import needed.
+    EMXP has no rename feature; this is an EmaxForge exclusive.
+
+    Example:
+      cli-anything-emaxforge rename-bank --disk HD10.hda --bank "STEEL DRUMS" --new-name "STEEL 808"
+    """
+    try:
+        result = rename_bank(disk_path=disk, old_name=old_name, new_name=new_name)
+
+        if output_json:
+            click.echo(__import__('json').dumps(result, indent=2))
+            return
+
+        if result.get('success'):
+            click.echo(f"✅ Renamed: \"{result['old_name']}\" → \"{result['new_name']}\"  (slot {result['slot']})")
         else:
             click.echo(f"❌ {result.get('error')}", err=True)
             sys.exit(1)
