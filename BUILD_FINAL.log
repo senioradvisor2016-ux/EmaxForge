@@ -1,0 +1,324 @@
+🔨 Building EmaxForge...
+Building for production...
+[0/1] Planning build
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for production...
+[2/5] Write sources
+[3/5] Write swift-version--58304C5D6DBC2206.txt
+[5/6] Compiling EmaxForge AppState.swift
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Models/SampleInfo.swift:107:13: warning: initialization of immutable value 'bankInfo' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+105 |         
+106 |         // Parse bank to get preset info (for "used by" tracking)
+107 |         let bankInfo = EmaxIIParser.parseBankData(bankData)
+    |             `- warning: initialization of immutable value 'bankInfo' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+108 |         let presetNames = extractPresetNames(from: bankData)
+109 |         
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:108:13: warning: initialization of immutable value 'revision' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+106 |         
+107 |         // HFE header
+108 |         let revision = data[8]
+    |             `- warning: initialization of immutable value 'revision' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+109 |         let numTracks = Int(data.readU16LE(at: 9))
+110 |         let numSides = Int(data[11])
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:109:13: warning: initialization of immutable value 'numTracks' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+107 |         // HFE header
+108 |         let revision = data[8]
+109 |         let numTracks = Int(data.readU16LE(at: 9))
+    |             `- warning: initialization of immutable value 'numTracks' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+110 |         let numSides = Int(data[11])
+111 |         let trackEncoding = data[12] // 0=ISOIBM_MFM, 2=AMIGA_MFM
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:110:13: warning: initialization of immutable value 'numSides' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+108 |         let revision = data[8]
+109 |         let numTracks = Int(data.readU16LE(at: 9))
+110 |         let numSides = Int(data[11])
+    |             `- warning: initialization of immutable value 'numSides' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+111 |         let trackEncoding = data[12] // 0=ISOIBM_MFM, 2=AMIGA_MFM
+112 |         let bitRate = Int(data.readU16LE(at: 14))
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:111:13: warning: initialization of immutable value 'trackEncoding' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+109 |         let numTracks = Int(data.readU16LE(at: 9))
+110 |         let numSides = Int(data[11])
+111 |         let trackEncoding = data[12] // 0=ISOIBM_MFM, 2=AMIGA_MFM
+    |             `- warning: initialization of immutable value 'trackEncoding' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+112 |         let bitRate = Int(data.readU16LE(at: 14))
+113 |         let floppyRPM = Int(data.readU16LE(at: 16))
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:112:13: warning: initialization of immutable value 'bitRate' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+110 |         let numSides = Int(data[11])
+111 |         let trackEncoding = data[12] // 0=ISOIBM_MFM, 2=AMIGA_MFM
+112 |         let bitRate = Int(data.readU16LE(at: 14))
+    |             `- warning: initialization of immutable value 'bitRate' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+113 |         let floppyRPM = Int(data.readU16LE(at: 16))
+114 |         let floppyInterfaceMode = data[18]
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:113:13: warning: initialization of immutable value 'floppyRPM' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+111 |         let trackEncoding = data[12] // 0=ISOIBM_MFM, 2=AMIGA_MFM
+112 |         let bitRate = Int(data.readU16LE(at: 14))
+113 |         let floppyRPM = Int(data.readU16LE(at: 16))
+    |             `- warning: initialization of immutable value 'floppyRPM' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+114 |         let floppyInterfaceMode = data[18]
+115 |         
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:114:13: warning: initialization of immutable value 'floppyInterfaceMode' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+112 |         let bitRate = Int(data.readU16LE(at: 14))
+113 |         let floppyRPM = Int(data.readU16LE(at: 16))
+114 |         let floppyInterfaceMode = data[18]
+    |             `- warning: initialization of immutable value 'floppyInterfaceMode' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+115 |         
+116 |         // Track offset table starts at 0x200
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/FormatConverter.swift:200:22: warning: immutable value 'name' was never used; consider replacing with '_' or removing it [#no-usage]
+198 |             do {
+199 |                 let banks = try convertToEB2(url: url)
+200 |                 for (name, data) in banks {
+    |                      `- warning: immutable value 'name' was never used; consider replacing with '_' or removing it [#no-usage]
+201 |                     // Write to temp, then import
+202 |                     let tempURL = FileManager.default.temporaryDirectory
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/ImageService.swift:18:13: warning: immutable value 'validSizes' was never used; consider replacing with '_' or removing it [#no-usage]
+16 |         
+17 |         // EMAX II images - industry-standard format standard sizes (verified Mar 4, 2026)
+18 |         let validSizes: Set<Int64> = [
+   |             `- warning: immutable value 'validSizes' was never used; consider replacing with '_' or removing it [#no-usage]
+19 |             96 * 1024 * 1024,   // ZIP 100
+20 |             239 * 1024 * 1024,  // ZIP 250
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/InstrumentPlayer.swift:249:29: warning: 'assign(from:count:)' is deprecated: renamed to 'update(from:count:)' [#DeprecatedDeclaration]
+247 |         if let channelData = buffer.floatChannelData?[0] {
+248 |             outputSamples.withUnsafeBufferPointer { src in
+249 |                 channelData.assign(from: src.baseAddress!, count: outputFrames)
+    |                             |- warning: 'assign(from:count:)' is deprecated: renamed to 'update(from:count:)' [#DeprecatedDeclaration]
+    |                             `- note: use 'update(from:count:)' instead
+250 |             }
+251 |         }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/InstrumentPlayer.swift:207:17: warning: initialization of variable 'scale' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+205 |             guard let ptr = raw.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
+206 |             // Convert Int16 to Float using vDSP
+207 |             var scale = Float(1.0 / 32768.0)
+    |                 `- warning: initialization of variable 'scale' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+208 |             // Manual conversion for safety
+209 |             for i in 0..<sourceFrames {
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/SampleConverter.swift:204:17: warning: variable 'ptr' was never mutated; consider changing to 'let' constant
+202 |         // --- Zone pointers (4 bytes per zone) ---
+203 |         for i in 0..<numZones {
+204 |             var ptr = Data([0x00, 0x00, UInt8(i), 0xFF])
+    |                 `- warning: variable 'ptr' was never mutated; consider changing to 'let' constant
+205 |             bank.append(ptr)
+206 |         }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/SampleConverter.swift:211:14: warning: immutable value 'idx' was never used; consider replacing with '_' or removing it [#no-usage]
+209 |         
+210 |         // --- Voice parameter blocks (32 bytes per zone) ---
+211 |         for (idx, sample) in samples.enumerated() {
+    |              `- warning: immutable value 'idx' was never used; consider replacing with '_' or removing it [#no-usage]
+212 |             var voice = Data(count: 32)
+213 |             
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/SampleConverter.swift:211:19: warning: immutable value 'sample' was never used; consider replacing with '_' or removing it [#no-usage]
+209 |         
+210 |         // --- Voice parameter blocks (32 bytes per zone) ---
+211 |         for (idx, sample) in samples.enumerated() {
+    |                   `- warning: immutable value 'sample' was never used; consider replacing with '_' or removing it [#no-usage]
+212 |             var voice = Data(count: 32)
+213 |             
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Services/SampleExporter.swift:121:17: warning: initialization of variable 'entry' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+119 |         for (index, sample) in bankSamples.samples.enumerated() {
+120 |             // Prefix with index for sort order
+121 |             var entry = sample
+    |                 `- warning: initialization of variable 'entry' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+122 |             let numberedName = String(format: "%02d_%@", index + 1, sample.name)
+123 |             
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Utilities/FormatPresetManager.swift:42:13: warning: initialization of immutable value 'factoryIDs' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 40 |     
+ 41 |     private func ensureFactoryDefaults() {
+ 42 |         let factoryIDs = Set(FormatPreset.FactoryPresets.all.map(\.id))
+    |             `- warning: initialization of immutable value 'factoryIDs' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 43 |         let existingIDs = Set(presets.map(\.id))
+ 44 |         
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/AIAssistantView.swift:30:10: warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+ 28 |             updateContext()
+ 29 |         }
+ 30 |         .onChange(of: appState.images) { _ in updateContext() }
+    |          `- warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+ 31 |         .onChange(of: appState.selectedVolume) { _ in updateContext() }
+ 32 |     }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/AIAssistantView.swift:31:10: warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+ 29 |         }
+ 30 |         .onChange(of: appState.images) { _ in updateContext() }
+ 31 |         .onChange(of: appState.selectedVolume) { _ in updateContext() }
+    |          `- warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+ 32 |     }
+ 33 |     
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/AIAssistantView.swift:176:14: warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+174 |                 .padding(.horizontal, 10)
+175 |             }
+176 |             .onChange(of: service.messages.count) { _ in
+    |              `- warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+177 |                 scrollToBottom(proxy: proxy)
+178 |             }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/AIAssistantView.swift:179:14: warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+177 |                 scrollToBottom(proxy: proxy)
+178 |             }
+179 |             .onChange(of: service.currentStreamingText) { _ in
+    |              `- warning: 'onChange(of:perform:)' was deprecated in macOS 14.0: Use `onChange` with a two or zero parameter action closure instead. [#DeprecatedDeclaration]
+180 |                 scrollToBottom(proxy: proxy)
+181 |             }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BankBrowserView.swift:1062:49: warning: reference to captured var 'totalImported' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+1060 |                 await MainActor.run {
+1061 |                     isImporting = false
+1062 |                     statusMessage = "Imported \(totalImported) bank(s)"
+     |                                                 `- warning: reference to captured var 'totalImported' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+1063 |                     appState.addActivity("Dropped & imported \(totalImported) bank(s)", type: .success)
+1064 |                 }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BankBrowserView.swift:1063:64: warning: reference to captured var 'totalImported' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+1061 |                     isImporting = false
+1062 |                     statusMessage = "Imported \(totalImported) bank(s)"
+1063 |                     appState.addActivity("Dropped & imported \(totalImported) bank(s)", type: .success)
+     |                                                                `- warning: reference to captured var 'totalImported' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+1064 |                 }
+1065 |                 
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BatchBankImportSheet.swift:300:23: warning: expression of type 'BankImporter.ImportResult' is unused [#no-usage]
+298 |                             allowDuplicate: !skipDuplicates
+299 |                         )
+300 |                     }.value
+    |                       `- warning: expression of type 'BankImporter.ImportResult' is unused [#no-usage]
+301 |                     await MainActor.run {
+302 |                         importResults.append(ImportResult(
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BatchBankImportSheet.swift:298:46: warning: main actor-isolated property 'skipDuplicates' cannot be accessed from outside of the actor; this is an error in the Swift 6 language mode
+296 |                             eb2URL: url,
+297 |                             into: target.url,
+298 |                             allowDuplicate: !skipDuplicates
+    |                                              `- warning: main actor-isolated property 'skipDuplicates' cannot be accessed from outside of the actor; this is an error in the Swift 6 language mode
+299 |                         )
+300 |                     }.value
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BatchConvertorView.swift:374:26: warning: immutable value 'j' was never used; consider replacing with '_' or removing it [#no-usage]
+372 |                     let banks = try FormatConverter.convertToEB2(url: file)
+373 |                     
+374 |                     for (j, (bankName, bankData)) in banks.enumerated() {
+    |                          `- warning: immutable value 'j' was never used; consider replacing with '_' or removing it [#no-usage]
+375 |                         let outputFile = outputDir
+376 |                             .appendingPathComponent(bankName)
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BootableDiskWizard.swift:865:23: warning: value 'values' was defined but never used; consider replacing with boolean test [#no-usage]
+ 863 |         
+ 864 |         return mountedVolumes.filter { url in
+ 865 |             guard let values = try? url.resourceValues(forKeys: Set(volumeKeys)) else { return false }
+     |                       `- warning: value 'values' was defined but never used; consider replacing with boolean test [#no-usage]
+ 866 |             // Check isRemovable via the volume key
+ 867 |             let isRemovable = (try? url.resourceValues(forKeys: [.volumeIsRemovableKey]).allValues[.volumeIsRemovableKey] as? Bool) ?? false
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BootableDiskWizard.swift:892:25: warning: initialization of immutable value 'isBootDisk' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 890 |                 for i in 0..<count {
+ 891 |                     // Multi-image logic: HD1 = boot (SCSI 1), HD2+ = data (SCSI 2+)
+ 892 |                     let isBootDisk = (i == 0 && count > 1) || (count == 1 && scsiID == 1)
+     |                         `- warning: initialization of immutable value 'isBootDisk' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 893 |                     let currentScsiID = count > 1 ? (i + 1) : scsiID
+ 894 |                     let currentIndex = imageIndex + i
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BootableDiskWizard.swift:894:25: warning: initialization of immutable value 'currentIndex' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 892 |                     let isBootDisk = (i == 0 && count > 1) || (count == 1 && scsiID == 1)
+ 893 |                     let currentScsiID = count > 1 ? (i + 1) : scsiID
+ 894 |                     let currentIndex = imageIndex + i
+     |                         `- warning: initialization of immutable value 'currentIndex' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 895 |                     
+ 896 |                     let filename: String
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/BootableDiskWizard.swift:975:40: warning: no calls to throwing functions occur within 'try' expression
+ 973 |                         
+ 974 |                         // Create DiskImage object for config generation
+ 975 |                         if let image = try? DiskImage.parse(url: imageURL, device: appState.currentDevice) {
+     |                                        `- warning: no calls to throwing functions occur within 'try' expression
+ 976 |                             createdImages.append(image)
+ 977 |                         }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/ContentView.swift:226:48: warning: immutable value 'bankName' was never used; consider replacing with '_' or removing it [#no-usage]
+224 |                 BatchRenameView()
+225 |                 
+226 |             case .sampleEditor(let sample, let bankName):
+    |                                                `- warning: immutable value 'bankName' was never used; consider replacing with '_' or removing it [#no-usage]
+227 |                 WaveformEditorView(
+228 |                     pcmData: sample.pcmData,
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/ConvertSamplesView.swift:68:32: warning: immutable value 'target' was never used; consider replacing with '_' or removing it [#no-usage]
+ 66 |         VStack(spacing: 0) {
+ 67 |             // Warning if converting to boot disk
+ 68 |             if isBootDisk, let target = targetImage {
+    |                                `- warning: immutable value 'target' was never used; consider replacing with '_' or removing it [#no-usage]
+ 69 |                 HStack(spacing: 12) {
+ 70 |                     Image(systemName: "exclamationmark.triangle.fill")
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/FormatDiskSheet.swift:148:28: warning: no 'async' operations occur within 'await' expression
+146 |             let keepOS = await keepOS
+147 |             let quickFormat = await quickFormat
+148 |             let imageURL = await image.url
+    |                            `- warning: no 'async' operations occur within 'await' expression
+149 |             
+150 |             do {
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/HexViewerView.swift:108:24: warning: main actor-isolated instance method 'formatHexDump(_:startOffset:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+106 |                 handle.seek(toFileOffset: UInt64(pageOffset))
+107 |                 let data = handle.readData(ofLength: pageSize)
+108 |                 return formatHexDump(data, startOffset: pageOffset)
+    |                        `- warning: main actor-isolated instance method 'formatHexDump(_:startOffset:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+109 |             }.value
+110 | 
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/ImageScannerView.swift:47:36: warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 45 |         ) else { return [] }
+ 46 | 
+ 47 |         for case let url as URL in enumerator {
+    |                                    `- warning: instance method 'makeIterator' is unavailable from asynchronous contexts; this is an error in the Swift 6 language mode
+ 48 |             let ext = url.pathExtension.lowercased()
+ 49 |             guard extensions.contains(ext) else { continue }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/ImportBanksView.swift:378:26: warning: immutable value 'name' was never used; consider replacing with '_' or removing it [#no-usage]
+376 |                         allResults.append(BankImporter.ImportResult(bankName: name, clustersUsed: 0, sizeBytes: 0, catalogIndex: 0))
+377 |                     }
+378 |                     for (name, error) in errors {
+    |                          `- warning: immutable value 'name' was never used; consider replacing with '_' or removing it [#no-usage]
+379 |                         allErrors.append((url, error))
+380 |                     }
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/ZuluConfigValidatorSheet.swift:45:13: warning: variable 'hasType' was written to, but never read
+ 43 | 
+ 44 |         var hasSCSI = false
+ 45 |         var hasType = false
+    |             `- warning: variable 'hasType' was written to, but never read
+ 46 |         var hasBlockSize = false
+ 47 |         var hasSelectionDelay = false
+
+/Users/senioradvisor/clawd/EmaxForge/EmaxForge/Sources/Views/ZuluConfigValidatorSheet.swift:46:13: warning: variable 'hasBlockSize' was written to, but never read
+ 44 |         var hasSCSI = false
+ 45 |         var hasType = false
+ 46 |         var hasBlockSize = false
+    |             `- warning: variable 'hasBlockSize' was written to, but never read
+ 47 |         var hasSelectionDelay = false
+ 48 |         var hasStartupDelay = false
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[5/7] Write Objects.LinkFileList
+[6/7] Linking EmaxForge
+Build complete! (42.37s)
+✅ Build complete!
+📦 App bundle: .build/EmaxForge.app
+
+To run: open .build/EmaxForge.app
+To install: cp -r .build/EmaxForge.app /Applications/

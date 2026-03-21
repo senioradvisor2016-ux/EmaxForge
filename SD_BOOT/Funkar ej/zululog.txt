@@ -1,0 +1,32 @@
+[227460488ms] SD card removed, trying to reinit
+[230953763ms] SD card communication speed: 41 MHz, 20 MB/s
+[230953763ms] SD card reinit succeeded
+[230953763ms] SD card detected, FAT32 volume size: 60890 MB
+[230953763ms] SD MID: 0x03, OID: 0x53 0x44
+[230953763ms] SD Name: SN64G
+[230953763ms] SD Date: 11/2025
+[230953763ms] SD Serial: 0x625B5923
+[230953764ms] Reading configuration from zuluscsi.ini
+[230953765ms] Active configuration:
+[230953765ms] -- SelectionDelay = 255
+[230953765ms] -- EnableUnitAttention = No
+[230953765ms] -- EnableSCSI2 = Yes
+[230953765ms] -- EnableSelLatch = No
+[230953765ms] -- MapLunsToIDs = No
+[230953765ms] -- EnableParity = Yes
+[230953770ms] -- Opening 'HD00.hda' for id: 0
+[230953771ms] ---- WARNING: file HD00.hda is not contiguous. This will increase read latency.
+[230953771ms] ---- Configuring as disk drive drive
+[230953771ms] ---- Drive geometry from image size: SectorsPerTrack=57 HeadsPerCylinder=15 total sectors 489060 (divisible)
+[230953771ms] ---- Read prefetch enabled: 8192 bytes
+[230953777ms] -- Opening 'HD10.hda' for id: 1
+[230953795ms] ---- Configuring as disk drive drive
+[230953795ms] ---- Drive geometry from image size: SectorsPerTrack=57 HeadsPerCylinder=15 total sectors 489060 (divisible)
+[230953795ms] ---- Read prefetch enabled: 8192 bytes
+[230953819ms] Finding images in directory /:
+[230953819ms] -- Ignoring /HD00.hda, SCSI ID 0 is already in use!
+[230953820ms] -- Ignoring /HD10.hda, SCSI ID 1 is already in use!
+[230953820ms] -- Platform supports ROM drive up to 800 kB
+[230953820ms] ---- ROM drive image not detected
+[230953821ms] SCSI ID: 0, BlockSize: 512, Type: 0, Quirks: 0, Size: 244530kB
+[230953821ms] SCSI ID: 1, BlockSize: 512, Type: 0, Quirks: 0, Size: 244530kB

@@ -1,0 +1,67 @@
+EmaxForge Mass Parser Test Results
+==================================
+Timestamp: 20260317_073056
+Target: /Users/senioradvisor/clawd/Emax vs Claude/Universe of Sounds 1
+Total banks: 504
+Success: 0
+Failed: 0
+
+Statistics:
+-----------
+
+Pointer Count Distribution:
+ 457 100
+  12 8
+  11 80
+   9 44
+   2 84
+   2 76
+   2 64
+   2 40
+   2 4
+   1 88
+   1 52
+   1 28
+   1 16
+   1 0
+
+File Size Distribution (MB):
+ 490 0
+  14 1
+
+Most Common Bank Names (top 20):
+ 385 T>   1 TEXTURE PAD A
+   7 PLAIN       A
+   2 PLAIN 1     A
+   1 X   1 Yamaha C3 88
+   1 Vx   1 WaveMerge   A
+   1 VELPAD      A
+   1 VEL-LEVEL   A
+   1 V   1 VCS 2 PLAIN A
+   1 UNPROCESSED A
+   1 TOY PIANO   A
+   1 THOR        A
+   1 THICK ANALOGA
+   1 Syrupano    A
+   1 Synth Bell  A
+   1 Synclavier 0A
+   1 SYNTHORGAN  A
+   1 SYNTHIMBA   A
+   1 SYNTH PIANO A
+   1 SYNTH ORCH  A
+   1 SYNORGUS    A
+
+Banks with 0 pointers:
+12_String_Guitarand_Voices.EB2
+
+Largest Banks (top 10):
+Baby_Grand.EB2	1077442
+Female_Voices_and_Synth.EB2	1072636
+Accordion_Bass.EB2	1071988
+Star_Travel.EB2	1070062
+Multi_Synth_Combo.EB2	1069844
+Grand_Piano_2.EB2	1068794
+Expensive_Synth_Stack.EB2	1068514
+Fretless_Bass_and_Piano.EB2	1067774
+Smoke_Piano.EB2	1063398
+Kyodai_Synth_Collage.EB2	1061554

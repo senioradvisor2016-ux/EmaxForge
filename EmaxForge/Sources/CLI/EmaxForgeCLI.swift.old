@@ -1,0 +1,235 @@
+import ArgumentParser
+import Foundation
+
+// Import shared services
+@_exported import struct Services.ImageCreator
+@_exported import struct Services.DiskSize
+@_exported import enum Services.OSVersion
+
+// MARK: - Use shared ImageCreator from Services
+// This ImageCreator INCLUDES OS write support!
+
+// MARK: - CLI Commands
+
+@main
+struct EmaxForgeCLI: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "emaxforge",
+        abstract: "EMAX-II Disk Image Manager (CLI)",
+        version: "0.5.0",
+        subcommands: [Create.self, Compare.self, Info.self]
+    )
+}
+
+struct Create: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Create a new EMAX-II disk image"
+    )
+    
+    @Option(name: .shortAndLong, help: "Disk image filename (without extension)")
+    var name: String
+    
+    @Option(name: .shortAndLong, help: "Disk size in MB (96, 239, 481, 633, or 962)")
+    var size: Int = 239
+    
+    @Option(name: .long, help: "Operating system version (rev2.14 or blank)")
+    var os: String = "rev2.14"
+    
+    @Option(name: .shortAndLong, help: "Output path (default: ./<name>.hda)")
+    var output: String?
+    
+    @Flag(name: .long, help: "Output JSON instead of human-readable text")
+    var json: Bool = false
+    
+    func run() async throws {
+        let outputPath = output ?? "\(name).hda"
+        let outputURL = URL(fileURLWithPath: outputPath)
+        
+        // Map size to DiskSize enum
+        let diskSize: DiskSize
+        switch size {
+        case 96:  diskSize = .mb96
+        case 239: diskSize = .mb239
+        case 481: diskSize = .mb481
+        case 633: diskSize = .mb633
+        case 962: diskSize = .mb962
+        default:
+            throw ValidationError("Invalid size. Use: 96, 239, 481, 633, or 962 MB")
+        }
+        
+        // Map OS to OSVersion enum
+        let osVersion: OSVersion? = os.lowercased() == "blank" ? nil : .rev214
+        
+        do {
+            // Use REAL ImageCreator with OS write support!
+            try ImageCreator.createImage(
+                at: outputURL,
+                size: diskSize,
+                osVersion: osVersion
+            )
+            
+            if json {
+                print("""
+                {
+                  "success": true,
+                  "path": "\(outputURL.path)",
+                  "size_mb": \(size),
+                  "os_version": "\(os)",
+                  "filename": "\(name).hda"
+                }
+                """)
+            } else {
+                print("✅ Created: \(name).hda")
+                print("   Path: \(outputURL.path)")
+                print("   Size: \(size) MB")
+                print("   OS: \(os)")
+            }
+        } catch {
+            if json {
+                print("""
+                {
+                  "success": false,
+                  "error": "\(error.localizedDescription)"
+                }
+                """)
+            } else {
+                print("❌ Failed: \(error.localizedDescription)")
+            }
+            throw ExitCode.failure
+        }
+    }
+}
+
+struct Compare: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Compare two disk images byte-for-byte"
+    )
+    
+    @Argument(help: "First disk image path")
+    var file1: String
+    
+    @Argument(help: "Second disk image path")
+    var file2: String
+    
+    @Flag(name: .long, help: "Output JSON instead of human-readable text")
+    var json: Bool = false
+    
+    func run() async throws {
+        let url1 = URL(fileURLWithPath: file1)
+        let url2 = URL(fileURLWithPath: file2)
+        
+        guard FileManager.default.fileExists(atPath: url1.path) else {
+            print(json ? "{\"error\": \"File not found: \(file1)\"}" : "❌ File not found: \(file1)")
+            throw ExitCode.failure
+        }
+        
+        guard FileManager.default.fileExists(atPath: url2.path) else {
+            print(json ? "{\"error\": \"File not found: \(file2)\"}" : "❌ File not found: \(file2)")
+            throw ExitCode.failure
+        }
+        
+        let data1 = try Data(contentsOf: url1)
+        let data2 = try Data(contentsOf: url2)
+        
+        if data1.count != data2.count {
+            if json {
+                print("""
+                {
+                  "match": false,
+                  "size1": \(data1.count),
+                  "size2": \(data2.count),
+                  "reason": "Size mismatch"
+                }
+                """)
+            } else {
+                print("❌ Size mismatch:")
+                print("   \(file1): \(data1.count) bytes")
+                print("   \(file2): \(data2.count) bytes")
+            }
+            return
+        }
+        
+        var firstDiff: Int?
+        for i in 0..<data1.count {
+            if data1[i] != data2[i] {
+                firstDiff = i
+                break
+            }
+        }
+        
+        if let diff = firstDiff {
+            if json {
+                print("""
+                {
+                  "match": false,
+                  "first_diff_offset": \(diff),
+                  "byte1": \(data1[diff]),
+                  "byte2": \(data2[diff])
+                }
+                """)
+            } else {
+                print("❌ Difference found at offset \(diff) (0x\(String(diff, radix: 16))):")
+                print("   \(file1): 0x\(String(format: "%02X", data1[diff]))")
+                print("   \(file2): 0x\(String(format: "%02X", data2[diff]))")
+            }
+        } else {
+            if json {
+                print("{\"match\": true, \"size\": \(data1.count)}")
+            } else {
+                print("✅ Files are identical (\(data1.count) bytes)")
+            }
+        }
+    }
+}
+
+struct Info: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show detailed disk image information"
+    )
+    
+    @Argument(help: "Disk image path")
+    var file: String
+    
+    @Flag(name: .long, help: "Output JSON instead of human-readable text")
+    var json: Bool = false
+    
+    func run() async throws {
+        let url = URL(fileURLWithPath: file)
+        
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            print(json ? "{\"error\": \"File not found\"}" : "❌ File not found: \(file)")
+            throw ExitCode.failure
+        }
+        
+        let data = try Data(contentsOf: url)
+        
+        guard data.count >= 512 else {
+            print(json ? "{\"valid\": false, \"error\": \"File too small\"}" : "❌ File too small")
+            return
+        }
+        
+        let bootSig1 = data[0x1FE]
+        let bootSig2 = data[0x1FF]
+        let clusterSize = data.withUnsafeBytes { $0.load(fromByteOffset: 0x00, as: UInt32.self).littleEndian }
+        let bankCount = data.withUnsafeBytes { $0.load(fromByteOffset: 0x14, as: UInt32.self).littleEndian }
+        
+        if json {
+            print("""
+            {
+              "valid": true,
+              "size": \(data.count),
+              "boot_signature": "0x\(String(format: "%02X%02X", bootSig1, bootSig2))",
+              "cluster_size": \(clusterSize),
+              "bank_count": \(bankCount)
+            }
+            """)
+        } else {
+            print("📊 Disk Image Info:")
+            print("   File: \(file)")
+            print("   Size: \(data.count) bytes (\(data.count / 1_024 / 1_024) MB)")
+            print("   Boot Signature: 0x\(String(format: "%02X%02X", bootSig1, bootSig2))")
+            print("   Cluster Size: \(clusterSize) bytes")
+            print("   Bank Count: \(bankCount)")
+        }
+    }
+}

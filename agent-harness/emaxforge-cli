@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wrapper to run cli-anything-emaxforge from venv
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+source "$SCRIPT_DIR/venv/bin/activate"
+exec cli-anything-emaxforge "$@"

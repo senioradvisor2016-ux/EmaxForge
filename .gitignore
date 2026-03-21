@@ -1,0 +1,51 @@
+# Build artifacts
+.build/
+*.xcodeproj
+*.xcworkspace
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+*.egg-info/
+dist/
+
+# Test artifacts
+/tmp/
+*.hda
+*.ez2
+*.img
+*.hfe
+
+# Except reference images
+!tests/reference/*.hda
+!tests/reference/*.ez2
+
+# Release builds
+EmaxForge.app
+EmaxForge-*.zip
+CHECKSUMS.txt
+
+# Binary/large files - not for git
+*.hda
+*.dmg
+*.zip
+*.gzf
+*.gbf
+*.bak
+*.backup
+*.exe
+*.EZ2.bak
+*.EZ2.backup
+SD_BOOT2/
+test_images/
+test_output/
+new boot/
+emaxforge-test/
+ghidra/EmaxProject.rep/

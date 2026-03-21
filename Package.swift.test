@@ -1,0 +1,18 @@
+// swift-tools-version: 5.9
+import PackageDescription
+
+let package = Package(
+    name: "EmaxForgeTest",
+    platforms: [.macOS(.v13)],
+    products: [
+        .executable(name: "test-boot", targets: ["TestBoot"])
+    ],
+    targets: [
+        .executableTarget(
+            name: "TestBoot",
+            dependencies: [],
+            path: "test-cli",
+            sources: ["main.swift"]
+        )
+    ]
+)
