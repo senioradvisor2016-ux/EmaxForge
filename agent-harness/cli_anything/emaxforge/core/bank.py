@@ -164,18 +164,30 @@ def _find_free_slot(bnt_data, geo):
 
 
 def _find_free_clusters(fat_data, count, total_clusters):
-    """Find `count` free clusters (FAT value == 0x0000), starting from cluster 2."""
-    free = []
+    """Find `count` *contiguous* free clusters (FAT value == 0x0000), starting from cluster 2.
+    
+    EMAX II requires contiguous allocation — it reads banks using
+    BNT startCluster + clusterCount without following a FAT chain.
+    """
+    run_start = None
+    run_len   = 0
     for i in range(2, total_clusters + 1):
         off = i * 2
         if off + 2 > len(fat_data):
             break
         val = struct.unpack_from('<H', fat_data, off)[0]
         if val == 0x0000:
-            free.append(i)
-            if len(free) >= count:
-                return free
-    raise ValueError(f"Need {count} free clusters but only found {len(free)}")
+            if run_start is None:
+                run_start = i
+                run_len   = 1
+            else:
+                run_len  += 1
+            if run_len >= count:
+                return list(range(run_start, run_start + count))
+        else:
+            run_start = None
+            run_len   = 0
+    raise ValueError(f"Need {count} contiguous free clusters but none found")
 
 
 # ============ PUBLIC API ============
@@ -225,28 +237,26 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         allocated = _find_free_clusters(fat, clusters_needed, g['total_clusters'])
         first_cluster_idx = allocated[0]
         
-        # Write bank data contiguously
+        # Write bank data cluster by cluster (clusters may not be contiguous)
         # Cluster addressing is 1-based: cluster n → ca_offset + (n-1)*clusterSize
         ca_bytes = g['ca_offset']
-        for i in range(clusters_needed):
+        for i, cl_idx in enumerate(allocated):
             chunk_start = i * cs
             chunk_end   = min(chunk_start + cs, len(bank_data))
             chunk = bank_data[chunk_start:chunk_end]
             if len(chunk) < cs:
                 chunk = chunk + b'\x00' * (cs - len(chunk))
 
-            cl_idx = first_cluster_idx + i
             offset = ca_bytes + (cl_idx - 1) * cs  # 1-based!
             f.seek(offset)
             f.write(chunk)
         
-        # Mark FAT entries as used
-        for i, cl in enumerate(allocated):
+        # Mark FAT entries as used (EMXP format: 0x8080 = allocated, not a chain)
+        # EMAX II reads banks contiguously using BNT startCluster + clusterCount;
+        # FAT is a flat allocation bitmap — 0x0000=free, 0x8080=used.
+        for cl in allocated:
             fat_off = cl * 2
-            if i < len(allocated) - 1:
-                struct.pack_into('<H', fat, fat_off, allocated[i + 1])
-            else:
-                struct.pack_into('<H', fat, fat_off, 0x7FFF)
+            struct.pack_into('<H', fat, fat_off, 0x8080)
         
         f.seek(g['fat_offset'])
         f.write(fat)
