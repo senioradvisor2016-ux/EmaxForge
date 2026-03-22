@@ -73,13 +73,14 @@ class BankImporter {
         var bntOffset: UInt64 { UInt64(bntStartSector) * 512 }
         var clusterAreaOffset: UInt64 { UInt64(clusterAreaStartSector) * 512 }
 
-        /// cluster → byte offset in image (0-based: cluster 0 = start of cluster area)
-        /// Verified against EmaxII-02.ez2: ca_offset=0xF000, cluster_size=65536
-        ///   cluster 0 → 0xF000 (reserved/BNT area overlap)
-        ///   cluster 1 → 0x1F000 (OS data, cluster 1 in FAT chain)
-        ///   cluster 5 → 0x5F000 (first bank, GUITAR/FLUTE)
+        /// cluster → byte offset in image (1-based: cluster 1 = start of cluster area)
+        /// Verified against EMXP emxp_base.hda (Mar 22 2026):
+        ///   cluster 1 → ca (OS data)
+        ///   cluster 2 → ca + 1*cs (first bank)
+        ///   cluster 3 → ca + 2*cs (second bank or overflow)
+        /// Formula: ca + (cluster - 1) * cs
         func clusterOffset(_ cluster: Int) -> UInt64 {
-            clusterAreaOffset + UInt64(cluster) * UInt64(clusterSize)
+            clusterAreaOffset + UInt64(cluster - 1) * UInt64(clusterSize)
         }
     }
 
@@ -149,22 +150,19 @@ class BankImporter {
         // Calculate clusters needed
         let clustersNeeded = (bankData.count + geo.clusterSize - 1) / geo.clusterSize
 
-        // Determine OS clusters by following FAT chain from cluster 1
-        // Cluster 0 is always reserved (BNT area), cluster 1+ are OS data clusters
-        var osClusters = Set<Int>([0])
-        var cur = 1
-        while cur < fat.count && fat[cur] != 0x0000 && fat[cur] != 0x8000 {
-            osClusters.insert(cur)
-            let next = Int(fat[cur])
-            if next == 0x7FFF { break }
-            cur = next
+        // Determine used clusters by scanning FAT for non-free entries
+        // Free = 0x0000, Used = anything else (0x7FFF, 0x8080, 0x8000, or next cluster index)
+        var usedClusters = Set<Int>([0])  // cluster 0 always reserved
+        for i in 1..<fat.count {
+            if fat[i] != 0x0000 {
+                usedClusters.insert(i)
+            }
         }
-        if cur < fat.count { osClusters.insert(cur) }  // include last OS cluster
 
-        // Find free clusters (skip reserved cluster 0 and all OS clusters)
+        // Find free clusters (skip reserved and used)
         var freeClusters = [Int]()
         for i in 1..<min(fat.count, geo.totalClusters + 2) {
-            if !osClusters.contains(i) && fat[i] == 0x0000 {
+            if !usedClusters.contains(i) {
                 freeClusters.append(i)
                 if freeClusters.count >= clustersNeeded { break }
             }
@@ -193,12 +191,12 @@ class BankImporter {
             }
         }
 
-        // Update FAT chain
+        // Update FAT chain — EMXP uses 0x8080 as end-of-chain marker (verified Mar 22 2026)
         for i in 0..<allocated.count {
             let cluster = allocated[i]
             fat[cluster] = i < allocated.count - 1
                 ? UInt16(allocated[i + 1])
-                : 0x7FFF  // end-of-chain
+                : 0x8080  // end-of-chain (EMXP format)
         }
 
         // Write updated FAT at 0x400
@@ -319,24 +317,14 @@ class BankImporter {
         handle.seek(toFileOffset: geo.fatOffset)
         let fatData = handle.readData(ofLength: geo.fatSize)
 
-        // Follow OS FAT chain from cluster 1, collect OS cluster indices
         var fatArr = [UInt16]()
         for i in stride(from: 0, to: min(geo.fatSize, fatData.count), by: 2) {
             fatArr.append(fatData.readU16LE(at: i))
         }
-        var osSet = Set<Int>([0])
-        var c = 1
-        while c < fatArr.count && fatArr[c] != 0x0000 && fatArr[c] != 0x8000 {
-            osSet.insert(c)
-            let n = Int(fatArr[c])
-            if n == 0x7FFF { break }
-            c = n
-        }
-        if c < fatArr.count { osSet.insert(c) }
 
         var freeCount = 0
         for i in 1..<min(fatArr.count, geo.totalClusters + 2) {
-            if !osSet.contains(i) && fatArr[i] == 0x0000 { freeCount += 1 }
+            if fatArr[i] == 0x0000 { freeCount += 1 }
         }
 
         return (freeCount, geo.clusterSize, freeCount * geo.clusterSize)

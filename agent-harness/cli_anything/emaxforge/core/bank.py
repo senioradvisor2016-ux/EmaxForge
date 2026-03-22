@@ -86,7 +86,7 @@ def _geo(hdr, disk_size_bytes):
 
 
 def _cluster_offset(geo, cluster_num):
-    """1-based: cluster n → ca_offset + (n-1) * clusterSize"""
+    """1-based: cluster n → ca_offset + (n-1) * clusterSize (verified vs EMXP HD10.EZ2)"""
     return geo['ca_offset'] + (cluster_num - 1) * geo['cluster_size']
 
 
@@ -234,7 +234,8 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         first_cluster_idx = allocated[0]
         
         # Write bank data cluster by cluster (clusters may not be contiguous)
-        # Cluster addressing is 1-based: cluster n → ca_offset + (n-1)*clusterSize
+        # Cluster addressing is 0-based: cluster n → ca_offset + n*clusterSize
+        # Verified against HD10.EZ2 (EMXP-created): cluster 2 → ca + 2*cs = 0xFB000
         ca_bytes = g['ca_offset']
         for i, cl_idx in enumerate(allocated):
             chunk_start = i * cs
