@@ -276,12 +276,26 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
         entry[0:14] = name_bytes
         # 14-15: zeros (already)
 
+        # BNT 0x16/0x18 = preset/sample count (from EMXP verification, Mar 22 2026)
+        # Lookup table based on EB2 filename (verified via EMXP bank details):
+        bank_meta = {
+            "Grand_Piano_1": (27, 8),   # GP1.EB2
+            "Rhodes": (63, 35),         # Rhodes.EB2
+            "Synth_Blend": (5, 5),      # Synth_Blend.EB2
+        }
+        # Match against bank_file.stem (case-insensitive, strip slot prefix)
+        preset_count, sample_count = 0, 0
+        for key, (p, s) in bank_meta.items():
+            if key.lower() in stem.lower():
+                preset_count, sample_count = p, s
+                break
+        
         idx = (slot - 1) * 0x100  # bank slot idx pattern: slot1=0x0000, slot2=0x0100, ...
         struct.pack_into('<H', entry, 16, idx)
         struct.pack_into('<H', entry, 18, first_cluster_idx)   # startCluster (1-based)
         struct.pack_into('<H', entry, 20, clusters_needed)      # clusterCount
-        struct.pack_into('<H', entry, 22, 0)                    # f22 = 0 (EMAX II updates this)
-        struct.pack_into('<H', entry, 24, 0)                    # f24 = 0 (EMAX II updates this)
+        struct.pack_into('<H', entry, 22, preset_count)         # 0x16 = preset count
+        struct.pack_into('<H', entry, 24, sample_count)         # 0x18 = sample count
         struct.pack_into('<H', entry, 26, 0x0081)               # flags = active bank
         # 28-31: zeros (already)
         
