@@ -394,3 +394,135 @@ def export_bank(disk_path: str, slot: int, output_path: str) -> dict:
         "clusters_used": len(clusters),
         "slot": slot,
     }
+
+
+def copy_bank(src_disk: str, src_slot: int, dst_disk: str, dst_slot: int = None) -> dict:
+    """
+    Copy bank from one disk to another (disk-to-disk, no conversion needed).
+    Raw cluster data is copied verbatim — no EB2 conversion required.
+    """
+    src = Path(src_disk)
+    dst = Path(dst_disk)
+    if not src.exists():
+        raise FileNotFoundError(f"Source disk not found: {src_disk}")
+    if not dst.exists():
+        raise FileNotFoundError(f"Destination disk not found: {dst_disk}")
+
+    # Read source bank
+    with open(src, 'rb') as f:
+        hdr = _read_header(f)
+        g = _geo(hdr, os.path.getsize(src))
+        fat = _read_fat(f, g)
+        bnt = _read_bnt(f, g)
+
+        parsed = _parse_bnt_entry(bnt, src_slot)
+        if parsed is None:
+            raise ValueError(f"No bank at source slot {src_slot}")
+
+        # Read raw cluster data
+        clusters = _get_bank_clusters(fat, parsed['startCluster'], parsed['clusterCount'])
+        bank_data = bytearray()
+        for cl in clusters:
+            f.seek(_cluster_offset(g, cl))
+            bank_data.extend(f.read(g['cluster_size']))
+
+    # Get preset/sample counts from source BNT entry
+    src_entry_off = src_slot * 32
+    src_entry = bnt[src_entry_off:src_entry_off + 32]
+    preset_count = struct.unpack_from('<H', src_entry, 22)[0]
+    sample_count = struct.unpack_from('<H', src_entry, 24)[0]
+
+    # Write to destination
+    with open(dst, 'r+b') as f:
+        hdr2 = _read_header(f)
+        g2 = _geo(hdr2, os.path.getsize(dst))
+        fat2 = _read_fat(f, g2)
+        bnt2 = _read_bnt(f, g2)
+
+        if dst_slot is None:
+            dst_slot = _find_free_slot(bnt2, g2)
+
+        clusters_needed = parsed['clusterCount']
+        allocated = _find_free_clusters(fat2, clusters_needed, g2['total_clusters'])
+
+        # Write cluster data
+        cs = g2['cluster_size']
+        for i, cl in enumerate(allocated):
+            chunk = bank_data[i*cs:(i+1)*cs]
+            if len(chunk) < cs:
+                chunk = chunk + b'\x00' * (cs - len(chunk))
+            f.seek(_cluster_offset(g2, cl))
+            f.write(chunk)
+
+        # Update FAT
+        for i, cl in enumerate(allocated):
+            fat_off = cl * 2
+            if i < len(allocated) - 1:
+                struct.pack_into('<H', fat2, fat_off, allocated[i + 1])
+            else:
+                struct.pack_into('<H', fat2, fat_off, 0x7FFF)
+        f.seek(g2['fat_offset'])
+        f.write(fat2)
+
+        # Write BNT entry
+        entry = bytearray(32)
+        name_bytes = parsed['name'].encode('ascii', errors='replace').ljust(14, b' ')[:14]
+        entry[0:14] = name_bytes
+        idx = (dst_slot - 1) * 0x100
+        struct.pack_into('<H', entry, 16, idx)
+        struct.pack_into('<H', entry, 18, allocated[0])
+        struct.pack_into('<H', entry, 20, clusters_needed)
+        struct.pack_into('<H', entry, 22, preset_count)
+        struct.pack_into('<H', entry, 24, sample_count)
+        struct.pack_into('<H', entry, 26, 0x0081)
+        f.seek(g2['bnt_offset'] + dst_slot * 32)
+        f.write(entry)
+
+    return {
+        'bank_name': parsed['name'],
+        'src_slot': src_slot,
+        'dst_slot': dst_slot,
+        'dst_cluster': allocated[0],
+        'clusters_used': clusters_needed,
+        'size_bytes': len(bank_data),
+        'preset_count': preset_count,
+        'sample_count': sample_count,
+    }
+
+
+def delete_bank(disk_path: str, slot: int) -> dict:
+    """Delete bank from disk (free FAT clusters, clear BNT entry)."""
+    if slot == 0:
+        raise ValueError("Cannot delete slot 0 (OS)")
+
+    disk = Path(disk_path)
+    if not disk.exists():
+        raise FileNotFoundError(f"Disk not found: {disk_path}")
+
+    with open(disk, 'r+b') as f:
+        hdr = _read_header(f)
+        g = _geo(hdr, os.path.getsize(disk))
+        fat = _read_fat(f, g)
+        bnt = _read_bnt(f, g)
+
+        parsed = _parse_bnt_entry(bnt, slot)
+        if parsed is None:
+            raise ValueError(f"No bank at slot {slot}")
+
+        clusters = _get_bank_clusters(fat, parsed['startCluster'], parsed['clusterCount'])
+
+        # Free FAT entries
+        for cl in clusters:
+            struct.pack_into('<H', fat, cl * 2, 0x0000)
+        f.seek(g['fat_offset'])
+        f.write(fat)
+
+        # Clear BNT entry
+        f.seek(g['bnt_offset'] + slot * 32)
+        f.write(b'\x00' * 32)
+
+    return {
+        'bank_name': parsed['name'],
+        'slot': slot,
+        'clusters_freed': len(clusters),
+    }

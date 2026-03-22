@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from cli_anything.emaxforge.core.disk import create_disk, verify_disk
-from cli_anything.emaxforge.core.bank import import_bank, list_banks, export_bank
+from cli_anything.emaxforge.core.bank import import_bank, list_banks, export_bank, copy_bank as _copy_bank_fn, delete_bank as _delete_bank_fn
 from cli_anything.emaxforge.core.boot_creator import create_boot_disk, verify_boot_disk, list_images as _list_images
 from cli_anything.emaxforge.core.floppy_manager import create_floppy, list_floppies, convert_hfe_to_img
 from cli_anything.emaxforge.handlers.audio_converter import AudioConverter
@@ -1239,6 +1239,67 @@ def convert_hfe_cmd(hfe_file, output, output_json):
             click.echo(f"   Size:   {result['size_bytes']:,} bytes")
     except Exception as e:
         if output_json:
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("copy-bank")
+@click.argument('src_disk')
+@click.argument('src_slot', type=int)
+@click.argument('dst_disk')
+@click.option('--dst-slot', type=int, default=None, help='Destination slot (auto if omitted)')
+@click.option('--format', 'output_format', default='text', type=click.Choice(['text', 'json']))
+def copy_bank_cmd(src_disk, src_slot, dst_disk, dst_slot, output_format):
+    """Copy bank from SRC_DISK slot SRC_SLOT to DST_DISK.
+
+    \b
+    Copies raw cluster data verbatim — no EB2 conversion required.
+    Destination slot is auto-assigned if not specified.
+
+    Example:
+      cli-anything-emaxforge copy-bank HD10.EZ2 1 HD20.hda
+    """
+    try:
+        result = _copy_bank_fn(src_disk, src_slot, dst_disk, dst_slot)
+        if output_format == 'json':
+            click.echo(json.dumps(result))
+        else:
+            click.echo(f"✅ Copied '{result['bank_name']}' → slot {result['dst_slot']}")
+            click.echo(f"   Clusters: {result['clusters_used']} @ cluster {result['dst_cluster']}")
+            click.echo(f"   Presets: {result['preset_count']}, Samples: {result['sample_count']}")
+    except Exception as e:
+        if output_format == 'json':
+            click.echo(json.dumps({"error": str(e)}))
+        else:
+            click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("delete-bank")
+@click.argument('disk_path')
+@click.argument('slot', type=int)
+@click.option('--format', 'output_format', default='text', type=click.Choice(['text', 'json']))
+def delete_bank_cmd(disk_path, slot, output_format):
+    """Delete bank at SLOT from DISK_PATH.
+
+    \b
+    Frees FAT clusters and clears the BNT entry.
+    Cannot delete slot 0 (OS).
+
+    Example:
+      cli-anything-emaxforge delete-bank HD20.hda 2
+    """
+    try:
+        result = _delete_bank_fn(disk_path, slot)
+        if output_format == 'json':
+            click.echo(json.dumps(result))
+        else:
+            click.echo(f"🗑️  Deleted '{result['bank_name']}' from slot {result['slot']}")
+            click.echo(f"   Freed {result['clusters_freed']} clusters")
+    except Exception as e:
+        if output_format == 'json':
             click.echo(json.dumps({"error": str(e)}))
         else:
             click.echo(f"❌ Error: {e}", err=True)
