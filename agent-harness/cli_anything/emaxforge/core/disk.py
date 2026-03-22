@@ -181,17 +181,26 @@ def create_disk(size_mb: int, scsi_id: int, output_path: str, include_os: bool =
     output.parent.mkdir(parents=True, exist_ok=True)
     
     with open(template_path, 'rb') as src:
-        template_data = src.read()
+        template_data = bytearray(src.read())
     
-    # If no OS requested, clear OS entry and cluster
+    # Write OS if requested
+    # OS file: same directory as this script's package, under Os/
+    # OS file: ~/clawd/emxp/Os/ (absolute, project-relative)
+    os_file = Path.home() / "clawd" / "emxp" / "Os" / "Emax II rev 2.14.EMX"
+    if include_os and os_file.exists():
+        # Read cluster geometry from template header
+        ca_start_sector = struct.unpack_from('<I', template_data, 0x20)[0]
+        ca_offset = ca_start_sector * 512  # 0xC400 for 239 MB
+        os_data = os_file.read_bytes()
+        template_data[ca_offset : ca_offset + len(os_data)] = os_data
+        
+        # Fix OS catalog entry FLAGS (0x8100, not 0x8000)
+        # OS entry @ 0x1000, FLAGS @ +0x1A = 0x101A
+        struct.pack_into('<H', template_data, 0x101A, 0x0081)  # 0x0081 LE = 0x8100 BE
+    
     if not include_os:
         # Clear catalog entry 0 (OS)
-        template_data = bytearray(template_data)
-        template_data[0x1000:0x1040] = b'\x00' * 64
-        
-        # Clear OS cluster (cluster 1)
-        # TODO: Calculate cluster size and offset from template
-        # For now, just note that OS would be cleared
+        template_data[0x1000:0x1020] = b'\x00' * 32
     
     with open(output, 'wb') as dst:
         dst.write(template_data)
