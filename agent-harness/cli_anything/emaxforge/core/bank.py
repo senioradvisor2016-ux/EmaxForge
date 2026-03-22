@@ -127,27 +127,23 @@ def _parse_bnt_entry(bnt_data, slot):
     }
 
 
-def _follow_fat_chain(fat_data, start_cluster, max_entries=10000):
-    """Follow FAT chain, return list of cluster numbers."""
+def _get_bank_clusters(fat_data, start_cluster, cluster_count):
+    """Get cluster list for a bank following FAT chains.
+    
+    EMXP writes FAT as linked list: FAT[n] = next_cluster, 0x7FFF = EOC.
+    Verified against HD10.EZ2 (100% EMXP-created, Mar 22 2026).
+    We follow the chain from start_cluster up to cluster_count entries.
+    """
     clusters = []
-    current = start_cluster
-    visited = set()
-    
-    while current > 0 and current * 2 + 2 <= len(fat_data) and len(clusters) < max_entries:
-        if current in visited:
-            break  # loop
-        visited.add(current)
-        clusters.append(current)
-        
-        nxt = struct.unpack_from('<H', fat_data, current * 2)[0]
-        if nxt == 0x7FFF or nxt == 0xFFFF:  # end-of-chain
+    cur = start_cluster
+    for _ in range(cluster_count):
+        if cur == 0 or cur == 0x7FFF:
             break
-        if nxt == 0x0000:  # free (broken chain)
+        clusters.append(cur)
+        off = cur * 2
+        if off + 2 > len(fat_data):
             break
-        if nxt == 0x8000:  # reserved
-            break
-        current = nxt
-    
+        cur = struct.unpack_from('<H', fat_data, off)[0]
     return clusters
 
 
@@ -251,12 +247,16 @@ def import_bank(disk_path: str, bank_path: str, slot: int = None) -> dict:
             f.seek(offset)
             f.write(chunk)
         
-        # Mark FAT entries as used (EMXP format: 0x8080 = allocated, not a chain)
-        # EMAX II reads banks contiguously using BNT startCluster + clusterCount;
-        # FAT is a flat allocation bitmap — 0x0000=free, 0x8080=used.
-        for cl in allocated:
+        # Mark allocated clusters in FAT as chains (EMXP format: linked list)
+        # Verified against HD10.EZ2 (100% EMXP-created, Mar 22 2026):
+        #   FAT[n] = next_cluster, last = 0x7FFF (EOC)
+        # Example: 5 clusters starting at 2 → FAT[2]=3, FAT[3]=4, FAT[4]=5, FAT[5]=6, FAT[6]=0x7FFF
+        for i, cl in enumerate(allocated):
             fat_off = cl * 2
-            struct.pack_into('<H', fat, fat_off, 0x8080)
+            if i < len(allocated) - 1:
+                struct.pack_into('<H', fat, fat_off, allocated[i + 1])  # next in chain
+            else:
+                struct.pack_into('<H', fat, fat_off, 0x7FFF)  # EOC
         
         f.seek(g['fat_offset'])
         f.write(fat)
@@ -355,10 +355,10 @@ def export_bank(disk_path: str, slot: int, output_path: str) -> dict:
         if parsed is None:
             raise ValueError(f"No bank at slot {slot}")
         
-        # Follow FAT chain
-        clusters = _follow_fat_chain(fat, parsed['startCluster'])
+        # Get contiguous clusters by BNT startCluster+clusterCount
+        clusters = _get_bank_clusters(fat, parsed['startCluster'], parsed['clusterCount'])
         if not clusters:
-            raise ValueError(f"Empty FAT chain for slot {slot}")
+            raise ValueError(f"Empty cluster list for slot {slot}")
         
         # Read cluster data (1-based)
         bank_data = bytearray()
