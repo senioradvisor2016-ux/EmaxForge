@@ -45,6 +45,7 @@ struct BankBrowserView: View {
     @State private var bankToExtract: BankCatalogEntry?
     @State private var showInspector = false
     @State private var currentPresetParams: VoiceParameters?
+    @State private var currentPresetIndex: Int = 0
     
     // Multi-bank selection (issue #1)
     @State private var selectedBanks: Set<UUID> = []
@@ -218,8 +219,21 @@ struct BankBrowserView: View {
                     params: params,
                     presetName: bank.name
                 ) { editedParams in
-                    // TODO: Save edited preset back to bank
-                    statusMessage = "Preset changes applied (save to bank not yet implemented)"
+                    // Wired: voiceRecords (all 16 voice params). Name/keyMap require extended PresetEditorView.
+                    let presetIndex = currentPresetIndex
+                    let update = PresetWriteService.PresetUpdate(
+                        name: nil,
+                        voiceRecords: [editedParams.toData()],
+                        keyMap: nil
+                    )
+                    do {
+                        try PresetWriteService.updatePreset(
+                            at: presetIndex, update: update, in: bank, imageURL: image.url
+                        )
+                        statusMessage = "Preset \(presetIndex + 1) saved to \(bank.name) ✓"
+                    } catch {
+                        statusMessage = "Save failed: \(error.localizedDescription)"
+                    }
                 }
             }
         }
@@ -577,7 +591,7 @@ struct BankBrowserView: View {
                     .tint(appState.favoritesManager.isFavorite(bankName: entry.name) ? .yellow : .secondary)
                     
                     Button {
-                        // Load preset params from first zone if available
+                        currentPresetIndex = 0   // Edit first preset; user can switch in PresetEditorView
                         currentPresetParams = VoiceParameters()
                         showPresetEditor = true
                     } label: {
