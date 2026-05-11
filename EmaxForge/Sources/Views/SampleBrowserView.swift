@@ -1,10 +1,13 @@
 import SwiftUI
+import AppKit
 
 /// Sample-centric browser showing all samples on disk
 struct SampleBrowserView: View {
     let image: DiskImage
-    
+
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var samplePlayer = SamplePlayer()
+
     @State private var samples: [SampleInfo] = []
     @State private var isAnalyzing = false
     @State private var searchText = ""
@@ -12,7 +15,8 @@ struct SampleBrowserView: View {
     @State private var showOrphansOnly = false
     @State private var selectedSample: Set<SampleInfo.ID> = []
     @State private var analysisResult: SampleAnalyzer.AnalysisResult?
-    
+    @State private var exportError: String? = nil
+
     enum SortOrder {
         case name, size, duration, bank, rate
     }
@@ -71,6 +75,18 @@ struct SampleBrowserView: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 
+                // Stop playback button (visible when previewing)
+                if samplePlayer.isPlaying {
+                    Button {
+                        samplePlayer.stop()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+
                 Button {
                     dismiss()
                 } label: {
@@ -172,8 +188,17 @@ struct SampleBrowserView: View {
                 }
                 .contextMenu(forSelectionType: SampleInfo.ID.self) { selection in
                     if !selection.isEmpty {
-                        Button("Preview") { /* TODO */ }
-                        Button("Extract as WAV...") { /* TODO */ }
+                        Button(samplePlayer.isPlaying ? "Stop Preview" : "Preview") {
+                            let found = samples.filter { selection.contains($0.id) }
+                            guard let first = found.first else { return }
+                            samplePlayer.togglePlayback(
+                                pcmData: first.pcmData,
+                                sampleRate: Double(first.sampleRate)
+                            )
+                        }
+                        Button("Extract as WAV...") {
+                            Task { await extractAsWAV(ids: selection) }
+                        }
                         Divider()
                         Button("Copy Name") { copyNames(selection) }
                     }
@@ -216,8 +241,14 @@ struct SampleBrowserView: View {
             .background(Color.secondary.opacity(0.05))
         }
         .frame(width: 900, height: 600)
-        .task {
-            await analyzeSamples()
+        .task { await analyzeSamples() }
+        .alert("Export Failed", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK") { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
         }
     }
     
@@ -245,9 +276,65 @@ struct SampleBrowserView: View {
             .filter { selection.contains($0.id) }
             .map(\.name)
             .joined(separator: "\n")
-        
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(names, forType: .string)
+    }
+
+    @MainActor
+    private func extractAsWAV(ids: Set<SampleInfo.ID>) async {
+        let toExport = samples.filter { ids.contains($0.id) }
+        guard !toExport.isEmpty else { return }
+
+        if toExport.count == 1, let sample = toExport.first {
+            // Single sample → NSSavePanel
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.wav]
+            panel.nameFieldStringValue = SampleExporter.sanitizeFilename(
+                sample.name.isEmpty ? "sample_\(sample.sampleIndex)" : sample.name
+            ) + ".wav"
+            panel.title = "Export \"\(sample.name)\" as WAV"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            do {
+                try SampleExporter.exportPCMData(
+                    sample.pcmData,
+                    name: sample.name,
+                    sampleRate: Double(sample.sampleRate),
+                    to: url
+                )
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                exportError = error.localizedDescription
+            }
+        } else {
+            // Multiple samples → choose output folder
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.prompt = "Export Here"
+            panel.message = "Export \(toExport.count) samples as WAV files"
+            guard panel.runModal() == .OK, let dir = panel.url else { return }
+            var failed = 0
+            for sample in toExport {
+                let safeName = SampleExporter.sanitizeFilename(
+                    sample.name.isEmpty ? "sample_\(sample.sampleIndex)" : sample.name
+                )
+                let url = dir.appendingPathComponent(safeName + ".wav")
+                do {
+                    try SampleExporter.exportPCMData(
+                        sample.pcmData,
+                        name: sample.name,
+                        sampleRate: Double(sample.sampleRate),
+                        to: url
+                    )
+                } catch { failed += 1 }
+            }
+            if failed == 0 {
+                NSWorkspace.shared.open(dir)
+            } else {
+                exportError = "\(failed) of \(toExport.count) sample(s) failed to export"
+            }
+        }
     }
 }
 

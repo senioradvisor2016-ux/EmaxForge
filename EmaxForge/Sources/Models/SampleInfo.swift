@@ -5,6 +5,7 @@ struct SampleInfo: Identifiable, Hashable {
     let id = UUID()
     let name: String
     let bankName: String
+    let sampleIndex: Int        // 0-based index within the bank
     let size: Int
     let bitDepth: Int
     let sampleRate: Int
@@ -13,6 +14,7 @@ struct SampleInfo: Identifiable, Hashable {
     let loopStart: Int?
     let loopEnd: Int?
     let usedByPresets: [String]
+    let pcmData: Data           // Raw 16-bit LE PCM for preview/export
     
     var isOrphan: Bool { usedByPresets.isEmpty }
     
@@ -117,6 +119,7 @@ struct SampleAnalyzer {
             let info = SampleInfo(
                 name: sample.name,
                 bankName: bank.name,
+                sampleIndex: sample.index,
                 size: sample.pcmData.count,
                 bitDepth: 16, // EMAX-II is always 16-bit
                 sampleRate: sample.sampleRate,
@@ -124,7 +127,8 @@ struct SampleAnalyzer {
                 hasLoop: sample.loopStart != nil && sample.loopEnd != nil,
                 loopStart: sample.loopStart,
                 loopEnd: sample.loopEnd,
-                usedByPresets: usedBy
+                usedByPresets: usedBy,
+                pcmData: sample.pcmData
             )
             
             samples.append(info)

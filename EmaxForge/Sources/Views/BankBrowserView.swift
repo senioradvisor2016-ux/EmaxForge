@@ -60,6 +60,12 @@ struct BankBrowserView: View {
 
     // Voice zone editor sheet
     @State private var showVoiceZoneEditor = false
+
+    // Bank merge sheet
+    @State private var showMerge = false
+
+    // Preset reorder sheet
+    @State private var showPresetReorder = false
     
     var filteredBanks: [BankCatalogEntry] {
         guard let fs = fileSystem else { return [] }
@@ -269,6 +275,23 @@ struct BankBrowserView: View {
                     initialPresetIndex: 0,
                     presetNames: names,
                     samples: sd.samples
+                )
+            }
+        }
+        .sheet(isPresented: $showMerge) {
+            if let bank = selectedBank, let fs = fileSystem {
+                BankMergeView(
+                    sourceBank: bank,
+                    imageURL: image.url,
+                    allBanks: fs.userBanks
+                )
+            }
+        }
+        .sheet(isPresented: $showPresetReorder) {
+            if let bank = selectedBank {
+                PresetReorderView(
+                    bankEntry: bank,
+                    imageURL: image.url
                 )
             }
         }
@@ -625,6 +648,25 @@ struct BankBrowserView: View {
                     .buttonStyle(.bordered)
                     .tint(.purple)
                     .disabled(sampleData?.samples.isEmpty ?? true)
+
+                    if let fs = fileSystem, fs.userBanks.count >= 2 {
+                        Button {
+                            showMerge = true
+                        } label: {
+                            Label("Merge Into…", systemImage: "arrow.triangle.merge")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.indigo)
+                    }
+
+                    Button {
+                        showPresetReorder = true
+                    } label: {
+                        Label("Reorder Presets", systemImage: "arrow.up.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.accent)
+                    .disabled((entry.numPresets) < 2)
 
                     Button(role: .destructive) {
                         bankToDelete = entry

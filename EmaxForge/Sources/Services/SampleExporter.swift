@@ -264,8 +264,24 @@ class SampleExporter {
         }
     }
     
+    // MARK: - Raw PCM Export (used by SampleBrowserView)
+
+    /// Export raw 16-bit LE PCM data directly to a WAV or AIFF file.
+    /// Suitable for single-sample export from contexts that already hold PCM bytes
+    /// (e.g. `SampleInfo.pcmData`) without needing a full `BankSampleData.SampleEntry`.
+    static func exportPCMData(
+        _ pcmData: Data,
+        name: String,
+        sampleRate: Double,
+        to url: URL,
+        format: ExportFormat = .wav
+    ) throws {
+        guard !pcmData.isEmpty else { throw ExportError.noSampleData }
+        try writePCMToFile(pcmData: pcmData, sampleRate: sampleRate, to: url, format: format)
+    }
+
     // MARK: - Helpers
-    
+
     /// Normalize PCM data to use full dynamic range
     private static func normalizePCM(_ data: Data) -> Data {
         let frameCount = data.count / 2
