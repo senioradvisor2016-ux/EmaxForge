@@ -12,6 +12,7 @@ struct FormatPresetEditorSheet: View {
     @State private var showImportPicker = false
     @State private var showExportPicker = false
     @State private var presetToDelete: FormatPreset?
+    @State private var importError: String? = nil
     
     var body: some View {
         VStack(spacing: 0) {
@@ -149,6 +150,14 @@ struct FormatPresetEditorSheet: View {
         ) { result in
             handleExport(result)
         }
+        .alert("Import Failed", isPresented: Binding(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )) {
+            Button("OK") { importError = nil }
+        } message: {
+            Text(importError ?? "")
+        }
     }
     
     private func handleImport(_ result: Result<URL, Error>) {
@@ -157,11 +166,10 @@ struct FormatPresetEditorSheet: View {
             do {
                 try presetManager.importAllPresets(from: url)
             } catch {
-                // TODO: Show error alert
-                print("Import failed: \(error)")
+                importError = error.localizedDescription
             }
         case .failure(let error):
-            print("Import failed: \(error)")
+            importError = error.localizedDescription
         }
     }
     
