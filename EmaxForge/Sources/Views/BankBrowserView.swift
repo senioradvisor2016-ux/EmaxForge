@@ -53,6 +53,9 @@ struct BankBrowserView: View {
     
     // Export banks sheet (issue #1)
     @State private var showExportBanks = false
+
+    // Batch sample processing sheet
+    @State private var showBatchProcessing = false
     
     var filteredBanks: [BankCatalogEntry] {
         guard let fs = fileSystem else { return [] }
@@ -184,9 +187,25 @@ struct BankBrowserView: View {
                     sampleRate: Double(sample.sampleRate),
                     sampleName: sample.name
                 ) { editedPCM in
-                    // TODO: Save edited sample back to bank
-                    // For now, just update preview
-                    statusMessage = "Sample editing applied (save to bank not yet implemented)"
+                    guard let bank = selectedBank, let fs = fileSystem else { return }
+                    Task {
+                        do {
+                            try PCMReallocator.replaceSamplePCM(
+                                bankEntry: bank,
+                                sampleIndex: sample.index,
+                                newPCM: editedPCM,
+                                imageURL: image.url
+                            )
+                            await MainActor.run {
+                                statusMessage = "Sample '\(sample.name)' saved to bank ✓"
+                                loadBankDetail(bank, fs: fs)
+                            }
+                        } catch {
+                            await MainActor.run {
+                                statusMessage = "Save failed: \(error.localizedDescription)"
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -213,6 +232,15 @@ struct BankBrowserView: View {
         }
         .sheet(isPresented: $showExportBanks) {
             BankExportView(image: image)
+        }
+        .sheet(isPresented: $showBatchProcessing) {
+            if let bank = selectedBank, let sd = sampleData {
+                BatchSampleProcessingView(
+                    bankEntry: bank,
+                    imageURL: image.url,
+                    samples: sd.samples
+                )
+            }
         }
         .alert("Delete Bank?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) { performDelete() }
@@ -549,7 +577,16 @@ struct BankBrowserView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(Theme.cyan)
-                    
+
+                    Button {
+                        showBatchProcessing = true
+                    } label: {
+                        Label("Batch Process", systemImage: "waveform.badge.magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.accent)
+                    .disabled(sampleData?.samples.isEmpty ?? true)
+
                     Button(role: .destructive) {
                         bankToDelete = entry
                         showDeleteConfirm = true
@@ -585,7 +622,28 @@ struct BankBrowserView: View {
                         }
                         DetailRow(label: "Sample Data", value: "~\(ByteCountFormatter.string(fromByteCount: Int64(detail.sampleDataSize), countStyle: .file))")
                     }
-                    
+
+                    // EB2 format detected: no sample param table — offer one-click EMX conversion
+                    if detail.sampleParameters.isEmpty && detail.numSamples > 0 {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text("EB2 format — sample param table missing. Batch processing and pitch editing require EMX format.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Convert to EMX") {
+                                convertBankToEMX(entry)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.orange)
+                            .disabled(isImporting)
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.08))
+                        .cornerRadius(6)
+                    }
+
                     if let preset = detail.presetHeader {
                         DetailGrid {
                             Text("Preset Parameters")
@@ -1156,6 +1214,35 @@ struct BankBrowserView: View {
         }
     }
     
+    /// Convert an EB2-format bank (no sample param table) to full EMX format by injecting
+    /// a generated parameter table. Required before batch processing or pitch editing.
+    private func convertBankToEMX(_ entry: BankCatalogEntry) {
+        guard let fs = fileSystem else { return }
+        isImporting = true
+        statusMessage = "Converting '\(entry.name)' to EMX format…"
+
+        Task {
+            do {
+                let result = try EB2ParamTableBuilder.convertEB2ToEMX(
+                    bankEntry: entry,
+                    imageURL: image.url
+                )
+                await MainActor.run {
+                    isImporting = false
+                    statusMessage = "Converted '\(entry.name)': \(result.samplesDetected) sample(s) detected ✓"
+                    appState.addActivity("Converted '\(entry.name)' to EMX format", type: .success)
+                    // Reload bank data to show the new param table
+                    loadBankDetail(entry, fs: fs)
+                }
+            } catch {
+                await MainActor.run {
+                    isImporting = false
+                    statusMessage = "Conversion failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func importEB2Files() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true

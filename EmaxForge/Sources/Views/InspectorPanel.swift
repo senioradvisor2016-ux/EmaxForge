@@ -62,7 +62,7 @@ struct InspectorPanel: View {
                     case .structure:
                         StructureTab(bank: bank, parsed: parsedBank, samples: sampleData)
                     case .samples:
-                        SamplesTab(samples: sampleData)
+                        SamplesTab(samples: sampleData, bank: bank, imageURL: imageURL)
                     case .memory:
                         MemoryTab(bank: bank, bankData: bankData)
                     case .raw:
@@ -212,13 +212,18 @@ struct StructureTab: View {
 
 struct SamplesTab: View {
     let samples: BankSampleData?
-    
+    var bank: BankCatalogEntry? = nil
+    var imageURL: URL? = nil
+
     @State private var extractingIndex: Int? = nil
     @State private var extractSuccess: Bool = false
     @State private var extractError: String? = nil
     @State private var trimmingIndex: Int? = nil
     @State private var trimResult: String? = nil
-    
+    @State private var renamingIndex: Int? = nil
+    @State private var renameText: String = ""
+    @State private var renameError: String? = nil
+
     private let extractor = SampleExtractorService()
     private let trimmer = SampleTrimmerService()
     
@@ -270,7 +275,7 @@ struct SamplesTab: View {
                             }
                             .buttonStyle(.bordered)
                             .disabled(extractingIndex == sample.index)
-                            
+
                             Button {
                                 playSample(sample)
                             } label: {
@@ -278,7 +283,7 @@ struct SamplesTab: View {
                                     .font(.caption)
                             }
                             .buttonStyle(.bordered)
-                            
+
                             Button {
                                 trimSample(sample)
                             } label: {
@@ -287,6 +292,38 @@ struct SamplesTab: View {
                             }
                             .buttonStyle(.bordered)
                             .disabled(trimmingIndex == sample.index)
+
+                            if bank != nil && imageURL != nil {
+                                Button {
+                                    renamingIndex = sample.index
+                                    renameText = sample.name
+                                    renameError = nil
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        // Inline rename UI
+                        if renamingIndex == sample.index, let bank, let imageURL {
+                            HStack(spacing: 6) {
+                                TextField("New name (max 15 chars)", text: $renameText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.caption)
+                                    .frame(maxWidth: 160)
+                                    .onSubmit { commitRename(sample: sample, bank: bank, imageURL: imageURL) }
+                                Button("Save") { commitRename(sample: sample, bank: bank, imageURL: imageURL) }
+                                    .font(.caption)
+                                    .buttonStyle(.borderedProminent)
+                                Button("Cancel") { renamingIndex = nil }
+                                    .font(.caption)
+                                    .buttonStyle(.borderless)
+                            }
+                            if let err = renameError {
+                                Text(err).font(.caption2).foregroundStyle(.red)
+                            }
                         }
                         
                         // Status
@@ -460,6 +497,34 @@ struct SamplesTab: View {
                 await MainActor.run {
                     trimResult = "Trim failed: \(error.localizedDescription)"
                     trimmingIndex = nil
+                }
+            }
+        }
+    }
+
+    private func commitRename(sample: BankSampleData.SampleEntry,
+                               bank: BankCatalogEntry,
+                               imageURL: URL) {
+        let trimmed = String(renameText.prefix(15)).trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            renameError = "Name cannot be empty"
+            return
+        }
+        Task {
+            do {
+                try SampleParamWriteService.renameSample(
+                    at: sample.index,
+                    newName: trimmed,
+                    in: bank,
+                    imageURL: imageURL
+                )
+                await MainActor.run {
+                    renamingIndex = nil
+                    renameError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    renameError = error.localizedDescription
                 }
             }
         }

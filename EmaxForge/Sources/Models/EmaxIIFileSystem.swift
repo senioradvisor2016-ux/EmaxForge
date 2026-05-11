@@ -83,12 +83,23 @@ enum EmaxIIFormat {
     static let sampleDataOffset = 0x20000   // 128KB header total
     
     // Per-sample parameter field offsets (within each 64-byte block)
-    static let paramStartAddr = 0           // UInt32 LE — start address
-    static let paramEndAddr = 4             // UInt32 LE — end address
-    static let paramSampleRate = 8          // UInt16 LE — sample rate in Hz
-    static let paramLoopStart = 12          // UInt32 LE — loop start address
-    static let paramLoopEnd = 16            // UInt32 LE — loop end address
-    static let paramName = 32              // 16 chars — sample name
+    // Layout (verified against EMXP v3.11.4 / Ghidra, offset within 64-byte param block):
+    static let paramStartAddr          =  0   // +0x00 UInt32 LE — PCM start address
+    static let paramEndAddr            =  4   // +0x04 UInt32 LE — PCM end address
+    static let paramSampleRate         =  8   // +0x08 UInt16 LE — sample rate in Hz
+    static let paramOriginalKey        = 10   // +0x0A UInt8   — original MIDI key (0–127)
+    static let paramFlags              = 11   // +0x0B UInt8   — bit0=soundType, bit1=userDefinedName
+    static let paramSustainLoopStart   = 12   // +0x0C UInt32 LE — sustain loop start
+    static let paramSustainLoopEnd     = 16   // +0x10 UInt32 LE — sustain loop end
+    static let paramReleaseLoopStart   = 20   // +0x14 UInt32 LE — release loop start
+    static let paramReleaseLoopEnd     = 24   // +0x18 UInt32 LE — release loop end
+    static let paramLoopFlags          = 28   // +0x1C UInt8   — loop mode flags
+    static let paramName               = 32   // +0x20 16 chars — sample name (ASCII, NUL-padded)
+    static let paramOutputChannel      = 48   // +0x30 UInt8   — output channel (1-based)
+
+    // Legacy aliases kept for existing callsites
+    static let paramLoopStart          = paramSustainLoopStart
+    static let paramLoopEnd            = paramSustainLoopEnd
     
     // Audio specs (NS32CG16 — little-endian CPU)
     static let defaultSampleRate = 39063    // ~39.0625 kHz (crystal divider)

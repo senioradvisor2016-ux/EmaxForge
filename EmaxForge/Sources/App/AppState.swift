@@ -25,6 +25,7 @@ class AppState: ObservableObject {
     private let undoManager = UndoManager()
     @Published var canUndo = false
     @Published var canRedo = false
+    private var cancellables = Set<AnyCancellable>()
     
     let fileService = FileService()
     let imageService = ImageService()
@@ -68,13 +69,26 @@ class AppState: ObservableObject {
         ) { [weak self] _ in
             self?.updateUndoRedoState()
         }
+
+        // Observe DiskTransactionManager so toolbar undo/redo buttons reflect disk operations
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            DiskTransactionManager.shared.objectWillChange
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.updateUndoRedoState() }
+                .store(in: &self.cancellables)
+        }
     }
     
     private func updateUndoRedoState() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.canUndo = self.undoManager.canUndo
-            self.canRedo = self.undoManager.canRedo
+            // Include DiskTransactionManager disk-level undo stack
+            let (dtCanUndo, dtCanRedo) = MainActor.assumeIsolated {
+                (DiskTransactionManager.shared.canUndo, DiskTransactionManager.shared.canRedo)
+            }
+            self.canUndo = self.undoManager.canUndo || dtCanUndo
+            self.canRedo = self.undoManager.canRedo || dtCanRedo
         }
     }
     
@@ -197,24 +211,51 @@ class AppState: ObservableObject {
     }
     
     // MARK: - Undo/Redo
-    
+
     func undo() {
-        guard undoManager.canUndo else { return }
-        undoManager.undo()
-        refreshImages()
-        // Update state after undo completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.updateUndoRedoState()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Disk-level undo takes priority over NSUndoManager
+            let dtm = DiskTransactionManager.shared
+            if dtm.canUndo {
+                do {
+                    try dtm.undo()
+                } catch {
+                    self.statusMessage = "Undo failed: \(error.localizedDescription)"
+                }
+                self.refreshImages()
+                self.updateUndoRedoState()
+                return
+            }
+            guard self.undoManager.canUndo else { return }
+            self.undoManager.undo()
+            self.refreshImages()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.updateUndoRedoState()
+            }
         }
     }
-    
+
     func redo() {
-        guard undoManager.canRedo else { return }
-        undoManager.redo()
-        refreshImages()
-        // Update state after redo completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.updateUndoRedoState()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let dtm = DiskTransactionManager.shared
+            if dtm.canRedo {
+                do {
+                    try dtm.redo()
+                } catch {
+                    self.statusMessage = "Redo failed: \(error.localizedDescription)"
+                }
+                self.refreshImages()
+                self.updateUndoRedoState()
+                return
+            }
+            guard self.undoManager.canRedo else { return }
+            self.undoManager.redo()
+            self.refreshImages()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.updateUndoRedoState()
+            }
         }
     }
     
