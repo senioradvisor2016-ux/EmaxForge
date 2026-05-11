@@ -224,6 +224,8 @@ struct SamplesTab: View {
     @State private var renameText: String = ""
     @State private var renameError: String? = nil
 
+    @StateObject private var samplePlayer = SamplePlayer()
+
     private let extractor = SampleExtractorService()
     private let trimmer = SampleTrimmerService()
     
@@ -279,10 +281,13 @@ struct SamplesTab: View {
                             Button {
                                 playSample(sample)
                             } label: {
-                                Label("Play", systemImage: "play.fill")
+                                let isThis = samplePlayer.isPlaying
+                                Label(isThis ? "Stop" : "Play",
+                                      systemImage: isThis ? "stop.fill" : "play.fill")
                                     .font(.caption)
                             }
                             .buttonStyle(.bordered)
+                            .tint(samplePlayer.isPlaying ? .red : nil)
 
                             Button {
                                 trimSample(sample)
@@ -428,23 +433,7 @@ struct SamplesTab: View {
     }
     
     private func playSample(_ sample: BankSampleData.SampleEntry) {
-        // TODO: Integrate with SamplePlayer or open in QuickTime
-        Task {
-            do {
-                // Create temp WAV
-                let tempURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("preview_\(sample.name).wav")
-                
-                _ = try await extractor.extractSample(sample, to: tempURL)
-                
-                // Open in default player
-                _ = await MainActor.run {
-                    NSWorkspace.shared.open(tempURL)
-                }
-            } catch {
-                print("Play failed: \(error)")
-            }
-        }
+        samplePlayer.togglePlayback(pcmData: sample.pcmData, sampleRate: Double(sample.sampleRate))
     }
     
     private func trimSample(_ sample: BankSampleData.SampleEntry) {
