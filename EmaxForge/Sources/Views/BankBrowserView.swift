@@ -56,6 +56,9 @@ struct BankBrowserView: View {
 
     // Batch sample processing sheet
     @State private var showBatchProcessing = false
+
+    // Voice zone editor sheet
+    @State private var showVoiceZoneEditor = false
     
     var filteredBanks: [BankCatalogEntry] {
         guard let fs = fileSystem else { return [] }
@@ -238,6 +241,19 @@ struct BankBrowserView: View {
                 BatchSampleProcessingView(
                     bankEntry: bank,
                     imageURL: image.url,
+                    samples: sd.samples
+                )
+            }
+        }
+        .sheet(isPresented: $showVoiceZoneEditor) {
+            if let bank = selectedBank, let sd = sampleData {
+                let presetCount = bankDetail?.numPresets ?? 1
+                let names: [String] = (0..<presetCount).map { _ in "" } // preset names not yet parsed per-slot
+                VoiceZoneEditorView(
+                    bankEntry: bank,
+                    imageURL: image.url,
+                    initialPresetIndex: 0,
+                    presetNames: names,
                     samples: sd.samples
                 )
             }
@@ -585,6 +601,15 @@ struct BankBrowserView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(Theme.accent)
+                    .disabled(sampleData?.samples.isEmpty ?? true)
+
+                    Button {
+                        showVoiceZoneEditor = true
+                    } label: {
+                        Label("Voice Zones", systemImage: "pianokeys")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.purple)
                     .disabled(sampleData?.samples.isEmpty ?? true)
 
                     Button(role: .destructive) {
