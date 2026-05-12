@@ -5,7 +5,7 @@ import Foundation
 /// Verified disk layout (Mar 18 2026):
 ///   FAT:     ALWAYS at 0x400
 ///   BNT:     sector header[0x10]*512 (32-byte entries, NOT 64!)
-///   Clusters: 1-based — cluster n → ca_off + (n-1) * clusterSize
+///   Clusters: 0-based — cluster n → ca_off + n * clusterSize  (verified vs EmaxIIFileSystem.swift)
 class BankManager {
     
     enum BankError: Error, LocalizedError {
@@ -44,9 +44,9 @@ class BankManager {
         var caOffset: Int { caStartSector * 512 }
         var maxSlots: Int { min(maxBanks + 1, bntSize / 32) }
         
-        /// 1-based: cluster n → caOffset + (n-1)*clusterSize
+        /// 0-based: cluster n → caOffset + n*clusterSize  (verified vs EmaxIIFileSystem.swift)
         func clusterOffset(_ cluster: Int) -> Int {
-            caOffset + (cluster - 1) * clusterSize
+            caOffset + cluster * clusterSize
         }
     }
     
@@ -79,8 +79,9 @@ class BankManager {
             
             if name.lowercased() == bankName.lowercased() ||
                name.contains(bankName) || bankName.contains(name) {
-                let cl = Int(data.readU16LE(at: off + 18))
-                let cnt = Int(data.readU16LE(at: off + 20))
+                // BNT layout: startCluster at +16, clusterCount at +18 (verified vs EmaxIIFileSystem.swift)
+                let cl  = Int(data.readU16LE(at: off + 16))
+                let cnt = Int(data.readU16LE(at: off + 18))
                 return (i, cl, cnt)
             }
         }
@@ -103,12 +104,12 @@ class BankManager {
         
         print("🗑️  Deleting bank '\(bankName)' at slot \(found.slot), cluster \(found.cluster)")
         
-        // Free FAT chain
+        // Free FAT chain (cluster 0 is valid — 0-based addressing)
         var currentCluster = found.cluster
         var freedClusters = 0
         var visited = Set<Int>()
-        
-        while currentCluster > 1 && currentCluster < geo.fatSize / 2 {
+
+        while currentCluster >= 0 && currentCluster < geo.fatSize / 2 {
             guard !visited.contains(currentCluster) else {
                 print("⚠️  FAT loop at cluster \(currentCluster)")
                 break
@@ -123,10 +124,10 @@ class BankManager {
             diskData[fatOff + 1] = 0x00
             freedClusters += 1
             
-            if next == 0x7FFF || next == 0xFFFF || next == 0x0000 { break }
+            if next == 0x7FFF || next == 0x8080 || next == 0xFFFF || next == 0x0000 { break }
             currentCluster = next
         }
-        
+
         // Clear BNT entry (32 bytes)
         let entryOffset = geo.bntOffset + (found.slot * 32)
         let zeroes = Data(count: 32)
@@ -181,7 +182,8 @@ class BankManager {
         var bankData = Data()
         var visited = Set<Int>()
         
-        while currentCluster > 1 && currentCluster < geo.fatSize / 2 {
+        // Cluster 0 is valid — 0-based addressing
+        while currentCluster >= 0 && currentCluster < geo.fatSize / 2 {
             guard !visited.contains(currentCluster) else {
                 throw BankError.operationFailed("FAT chain loop at cluster \(currentCluster)")
             }
@@ -197,11 +199,11 @@ class BankManager {
             
             let fatOff = geo.fatOffset + (currentCluster * 2)
             let next = Int(diskData.readU16LE(at: fatOff))
-            if next == 0x7FFF || next == 0xFFFF { break }
+            if next == 0x7FFF || next == 0x8080 || next == 0xFFFF { break }
             if next == 0x0000 { break }
             currentCluster = next
         }
-        
+
         // Trim trailing zeros (sector-aligned)
         var trimmedSize = bankData.count
         while trimmedSize > 0 && bankData[trimmedSize - 1] == 0 { trimmedSize -= 1 }
@@ -231,8 +233,121 @@ class BankManager {
     
     // MARK: - Defragment
     
+    /// Defragment disk: repack all banks into contiguous clusters starting at 0.
+    /// Returns number of clusters compacted (moved).
+    /// Algorithm:
+    ///   1. Read all bank data following FAT chains
+    ///   2. Rewrite each bank's data into a fresh contiguous run of clusters
+    ///   3. Rebuild FAT and BNT to match new layout
     static func defragmentDisk(at diskURL: URL) throws -> Int {
-        throw BankError.operationFailed("Defragmentation not yet implemented")
+        var diskData = try Data(contentsOf: diskURL)
+        let geo = try parseGeo(from: diskData)
+
+        guard geo.clusterSize > 0 else {
+            throw BankError.operationFailed("Invalid cluster size")
+        }
+
+        // --- 1. Collect all live banks (BNT scan) ---
+        struct BankRecord {
+            let slot:    Int
+            let name:    String
+            let data:    Data
+            let count:   Int    // original cluster count
+        }
+
+        var banks: [BankRecord] = []
+
+        for i in 1..<geo.maxSlots {
+            let off = geo.bntOffset + i * 32
+            guard off + 32 <= diskData.count else { break }
+
+            let entry = diskData[off..<(off + 32)]
+            guard !entry.allSatisfy({ $0 == 0x00 || $0 == 0xFF }) else { continue }
+
+            let flags = diskData.readU16LE(at: off + 26)
+            guard flags == 0x0081 else { continue }
+
+            let nameRaw = String(data: diskData[off..<(off + 14)], encoding: .ascii) ?? ""
+            let name = nameRaw.trimmingCharacters(in: .init(charactersIn: " \0"))
+            guard !name.isEmpty else { continue }
+
+            let startCluster = Int(diskData.readU16LE(at: off + 16))
+            let clusterCount = Int(diskData.readU16LE(at: off + 18))
+            guard clusterCount > 0 else { continue }
+
+            // Follow FAT chain to read data
+            var data = Data()
+            var cur = startCluster
+            var visited = Set<Int>()
+            while cur >= 0 && cur < geo.fatSize / 2 {
+                guard !visited.contains(cur) else { break }
+                visited.insert(cur)
+                let clOff = geo.clusterOffset(cur)
+                guard clOff + geo.clusterSize <= diskData.count else { break }
+                data.append(diskData[clOff..<(clOff + geo.clusterSize)])
+                let fatOff = geo.fatOffset + cur * 2
+                let next = Int(diskData.readU16LE(at: fatOff))
+                if next == 0x7FFF || next == 0x8080 || next == 0xFFFF || next == 0x0000 { break }
+                cur = next
+            }
+
+            banks.append(BankRecord(slot: i, name: name, data: data, count: visited.count))
+        }
+
+        // --- 2. Clear FAT (except OS slot 0) ---
+        let fatStart = geo.fatOffset
+        let fatEnd   = min(fatStart + geo.fatSize, diskData.count)
+        diskData.replaceSubrange(fatStart..<fatEnd, with: Data(count: fatEnd - fatStart))
+
+        // --- 3. Repack banks contiguously starting at cluster 0 ---
+        var nextCluster = 0
+        var totalMoved = 0
+
+        for bank in banks {
+            let clustersNeeded = (bank.data.count + geo.clusterSize - 1) / geo.clusterSize
+            let oldStart = Int(diskData.readU16LE(at: geo.bntOffset + bank.slot * 32 + 16))
+            let newStart = nextCluster
+
+            // Write cluster data
+            for c in 0..<clustersNeeded {
+                let dst = geo.clusterOffset(newStart + c)
+                guard dst + geo.clusterSize <= diskData.count else { break }
+                let srcStart = c * geo.clusterSize
+                let srcEnd   = min(srcStart + geo.clusterSize, bank.data.count)
+                var chunk = Data(bank.data[srcStart..<srcEnd])
+                if chunk.count < geo.clusterSize {
+                    chunk.append(Data(count: geo.clusterSize - chunk.count))
+                }
+                diskData.replaceSubrange(dst..<(dst + geo.clusterSize), with: chunk)
+            }
+
+            // Write FAT chain
+            for c in 0..<clustersNeeded {
+                let cluster = newStart + c
+                let fatOff  = geo.fatOffset + cluster * 2
+                let nextVal: UInt16 = c < clustersNeeded - 1
+                    ? UInt16(newStart + c + 1)
+                    : 0x7FFF  // end-of-chain
+                diskData[fatOff]     = UInt8(nextVal & 0xFF)
+                diskData[fatOff + 1] = UInt8((nextVal >> 8) & 0xFF)
+            }
+
+            // Update BNT entry: startCluster and clusterCount
+            let bntOff = geo.bntOffset + bank.slot * 32
+            diskData[bntOff + 16] = UInt8(newStart & 0xFF)
+            diskData[bntOff + 17] = UInt8((newStart >> 8) & 0xFF)
+            diskData[bntOff + 18] = UInt8(clustersNeeded & 0xFF)
+            diskData[bntOff + 19] = UInt8((clustersNeeded >> 8) & 0xFF)
+
+            if newStart != oldStart { totalMoved += clustersNeeded }
+            nextCluster += clustersNeeded
+
+            print("🔧 Defrag: '\(bank.name)' → cluster \(newStart) (\(clustersNeeded) cluster(s))")
+        }
+
+        try diskData.write(to: diskURL)
+        print("✅ Defragmentation complete: \(totalMoved) cluster(s) moved, \(nextCluster) cluster(s) used")
+        return totalMoved
     }
     
     // MARK: - Disk Info

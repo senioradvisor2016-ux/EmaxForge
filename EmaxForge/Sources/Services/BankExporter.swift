@@ -5,7 +5,7 @@ import Foundation
 /// Verified disk layout (Mar 18 2026):
 ///   FAT:     ALWAYS at 0x400
 ///   BNT:     sector header[0x10]*512 (32-byte entries)
-///   Clusters: 1-based — cluster n → ca_off + (n-1) * clusterSize
+///   Clusters: 0-based — cluster n → ca_off + n * clusterSize  (verified vs EmaxIIFileSystem.swift)
 class BankExporter {
     
     struct ExportResult {
@@ -90,17 +90,19 @@ class BankExporter {
             let flags = entry.readU16LE(at: 26)
             guard flags == 0x0081 else { continue }
             
-            let name = String(data: entry[off..<(off + 14)], encoding: .ascii)?
+            // Use prefix(14) — entry is an absolute-indexed slice; avoid fragile entry[off..<off+14]
+            let name = String(data: entry.prefix(14), encoding: .ascii)?
                 .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
             
             if name.lowercased() == bankName.lowercased() {
-                foundCluster = Int(entry.readU16LE(at: 18))
-                foundClusterCount = Int(entry.readU16LE(at: 20))
+                // BNT layout: startCluster at +16, clusterCount at +18
+                foundCluster = Int(entry.readU16LE(at: 16))
+                foundClusterCount = Int(entry.readU16LE(at: 18))
                 break
             }
         }
         
-        guard let startCluster = foundCluster, startCluster > 1 else {
+        guard let startCluster = foundCluster else {
             throw ExportError.bankNotFound(bankName)
         }
         
@@ -109,11 +111,12 @@ class BankExporter {
         var current = startCluster
         let fatEntryCount = fatSize / 2
         
-        while current > 0 && current < fatEntryCount && clusters.count < 10000 {
+        while current >= 0 && current < fatEntryCount && clusters.count < 10000 {
             clusters.append(current)
             
             let next = Int(fatData.readU16LE(at: current * 2))
-            if next == 0x7FFF { break }  // end-of-chain
+            if next == 0x7FFF { break }  // end-of-chain (EMAX II hardware standard)
+            if next == 0x8080 { break }  // compat EOC (old BankImporter format)
             if next == 0x8000 { break }  // reserved
             if next == 0x0000 { break }  // free (broken chain)
             if next == current { break }  // loop
@@ -130,8 +133,8 @@ class BankExporter {
         bankData.reserveCapacity(clusters.count * clusterSize)
         
         for cluster in clusters {
-            // 1-based: cluster n → ca_off + (n-1) * clusterSize
-            let offset = caOffset + UInt64(cluster - 1) * UInt64(clusterSize)
+            // 0-based: cluster n → ca_off + n * clusterSize (verified vs EmaxIIFileSystem.swift)
+            let offset = caOffset + UInt64(cluster) * UInt64(clusterSize)
             handle.seek(toFileOffset: offset)
             guard let data = try handle.read(upToCount: clusterSize), data.count == clusterSize else {
                 throw ExportError.readError("Failed to read cluster \(cluster)")
