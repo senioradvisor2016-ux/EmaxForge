@@ -139,7 +139,6 @@ class SampleExporter {
         
         for (index, sample) in bankSamples.samples.enumerated() {
             // Prefix with index for sort order
-            var entry = sample
             let numberedName = String(format: "%02d_%@", index + 1, sample.name)
             
             let sanitized = sanitizeFilename(numberedName)
