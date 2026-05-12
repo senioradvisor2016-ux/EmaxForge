@@ -86,15 +86,19 @@ class PCMReallocator {
         let caStartSector   = Int(header.readU32LE(at: 0x20))
         let totalClusters   = Int(header.readU32LE(at: 0x24))
 
-        // Prefer header[0x04] for clusterSize (original EMAX II hardware disks store it directly).
-        // Fall back to geometry computation for EMXP-created disks (header[0x04] may be 0 or wrong).
+        // Cluster size from header[0x04]. Do NOT require % 512 == 0 — the EMAX II format
+        // stores opaque values that may not be sector-aligned (96 MB → 196352, 962 MB → 1969408).
+        // Trust header[0x04] when non-zero and within a sane range; fall back to geometric
+        // computation only when it is absent (zero).
         let headerCS = Int(header.readU32LE(at: 0x04))
         let clusterSize: Int
-        if headerCS > 0 && headerCS % 512 == 0 && headerCS <= 4_194_304 {
+        if headerCS > 0 && headerCS <= 4_194_304 {
             clusterSize = headerCS
         } else {
             let diskSizeSectors   = Int(fileSize / 512)
-            let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
+            let sectorsPerCluster = totalClusters > 0
+                ? max((diskSizeSectors - caStartSector) / totalClusters, 1)
+                : 128
             clusterSize = sectorsPerCluster * 512
         }
 

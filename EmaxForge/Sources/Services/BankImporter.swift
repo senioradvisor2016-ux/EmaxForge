@@ -90,18 +90,21 @@ class BankImporter {
             throw ImportError.notEmaxImage
         }
 
-        // clusterSize: prefer header[0x04] when it is a valid multiple of 512 and ≤ 4 MB
-        // (original EMAX II hardware disks, e.g. HD0.hda store clusterSize directly at 0x04).
-        // Fall back to geometry computation for EMXP-created disks where 0x04 holds disk size in sectors.
+        // Cluster size from header[0x04]. Do NOT require % 512 == 0 — the EMAX II format
+        // stores opaque values that may not be sector-aligned (96 MB → 196352, 962 MB → 1969408).
+        // Trust header[0x04] when non-zero and within a sane range; fall back to geometric
+        // computation only when it is absent (zero).
         let caStartSector = Int(header.readU32LE(at: 0x20))
         let totalClusters = Int(header.readU32LE(at: 0x24))
         let headerClusterSize = Int(header.readU32LE(at: 0x04))
         let clusterSize: Int
-        if headerClusterSize > 0 && headerClusterSize % 512 == 0 && headerClusterSize <= 4_194_304 {
+        if headerClusterSize > 0 && headerClusterSize <= 4_194_304 {
             clusterSize = headerClusterSize
         } else {
             let diskSizeSectors = Int(fileSize / 512)
-            let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
+            let sectorsPerCluster = totalClusters > 0
+                ? max((diskSizeSectors - caStartSector) / totalClusters, 1)
+                : 128
             clusterSize = sectorsPerCluster * 512
         }
 

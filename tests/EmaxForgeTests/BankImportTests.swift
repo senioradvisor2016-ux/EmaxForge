@@ -317,6 +317,72 @@ final class BankImportTests: XCTestCase {
         return disk
     }
 
+    // MARK: - Non-sector-aligned cluster size regression
+
+    /// Regression test: BankImporter must read cluster size from header[0x04] without
+    /// requiring % 512 == 0. The 96 MB EMAX II template uses clusterSize=196352 (% 512 = 256).
+    /// Before the fix, this fell through to geometric computation, giving a wrong cluster size.
+    func testImportAcceptsNonSectorAlignedClusterSize() throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BankTests_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        // Build a disk with clusterSize=196352 (96 MB template value; % 512 = 256)
+        let clusterSize = 196352  // NOT sector-aligned: 196352 % 512 = 256
+        let fatSectors  = 4
+        let bntSector   = 9
+        let caSector    = 20
+        let totalClusters = 4   // OS(1) + bank(2) + bank(3) + spare(0)
+        let diskSize    = caSector * 512 + totalClusters * clusterSize
+
+        var disk = Data(count: diskSize)
+        func write32(_ v: UInt32, at off: Int) {
+            disk[off] = UInt8(v & 0xFF); disk[off+1] = UInt8((v >> 8) & 0xFF)
+            disk[off+2] = UInt8((v >> 16) & 0xFF); disk[off+3] = UInt8((v >> 24) & 0xFF)
+        }
+        disk[0] = 0x45; disk[1] = 0x4D; disk[2] = 0x58; disk[3] = 0x32  // EMX2
+        write32(UInt32(clusterSize),    at: 0x04)  // cluster size (non-sector-aligned!)
+        write32(UInt32(bntSector),      at: 0x10)
+        write32(90,                     at: 0x14)  // maxBanks
+        write32(UInt32(fatSectors),     at: 0x1C)
+        write32(UInt32(caSector),       at: 0x20)
+        write32(UInt32(totalClusters),  at: 0x24)
+        // FAT at 0x400: FAT[0]=0x8000 reserved, FAT[1]=0x7FFF (OS single-cluster EOC)
+        disk[0x400] = 0x00; disk[0x401] = 0x80  // FAT[0]=0x8000
+        disk[0x402] = 0xFF; disk[0x403] = 0x7F  // FAT[1]=0x7FFF
+        // BNT slot 0: OS entry with 0x7800 special marker
+        let bntOff = bntSector * 512
+        let osName = Array("EMAX2 Software\0\0".utf8)
+        for (i, b) in osName.enumerated() { disk[bntOff + i] = b }
+        disk[bntOff + 16] = 0x00; disk[bntOff + 17] = 0x78  // startCluster = 0x7800 (OS marker)
+        disk[bntOff + 18] = 1;    disk[bntOff + 19] = 0     // clusterCount = 1
+        disk[bntOff + 26] = 0x80; disk[bntOff + 27] = 0x00  // flags
+        let diskURL = tmpDir.appendingPathComponent("test_96mb.hda")
+        try disk.write(to: diskURL)
+
+        // Create a minimal EB2 bank (smaller than one cluster)
+        var eb2 = Data(count: 1024)
+        eb2[0] = 0x45; eb2[1] = 0x42; eb2[2] = 0x32; eb2[3] = 0x00  // "EB2\0"
+        for (i, c) in "TESTBANK      ".utf8.prefix(14).enumerated() { eb2[4 + i] = c }
+        let bankURL = tmpDir.appendingPathComponent("TESTBANK.eb2")
+        try eb2.write(to: bankURL)
+
+        // Import should succeed — if cluster size was wrongly computed via geometric fallback,
+        // the disk write would seek to a completely wrong offset (or fail with out-of-range).
+        XCTAssertNoThrow(try BankImporter.importBank(eb2URL: bankURL, into: diskURL))
+
+        // Verify the FAT was updated: FAT[2] = 0x7FFF (bank at cluster 2, single-cluster EOC)
+        let updatedDisk = try Data(contentsOf: diskURL)
+        let fat2 = UInt16(updatedDisk[0x400 + 2*2]) | (UInt16(updatedDisk[0x400 + 2*2 + 1]) << 8)
+        XCTAssertEqual(fat2, 0x7FFF, "FAT[2] should be EOC (0x7FFF) after import")
+
+        // Verify the BNT entry for the new bank has startCluster=2
+        let bntSlot1 = bntOff + 32  // slot 1 (after OS at slot 0)
+        let startCluster = UInt16(updatedDisk[bntSlot1 + 16]) | (UInt16(updatedDisk[bntSlot1 + 17]) << 8)
+        XCTAssertEqual(startCluster, 2, "BNT slot 1 startCluster should be 2")
+    }
+
     // MARK: - Synthetic bank round-trip
 
     func testSyntheticBankData() throws {

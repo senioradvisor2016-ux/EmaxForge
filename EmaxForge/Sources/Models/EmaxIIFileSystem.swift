@@ -12,7 +12,10 @@ struct EmaxIIFileSystem {
     let imageSize: Int
     
     var maxClusters: Int { 512 }
-    var usedClusters: Int { fat.filter { $0 != 0x7FFF && $0 != 0 }.count }
+    /// Clusters in use = non-free, non-reserved entries in the FAT.
+    /// Includes EOC markers (0x7FFF, 0x8080) since they occupy real cluster space.
+    /// Excludes FAT[0] reserved marker (0x8000) and free entries (0x0000).
+    var usedClusters: Int { fat.filter { $0 != 0x0000 && $0 != 0x8000 }.count }
     var freeClusters: Int { fat.filter { $0 == 0 }.count }
     /// OS entry uses startCluster=0x7800 as special marker (verified against EmaxII-02.ez2)
     var hasOS: Bool { banks.contains { $0.startCluster == 0x7800 } }
@@ -574,9 +577,9 @@ enum EmaxIIParser {
         
         var data = Data()
         for cluster in entry.clusterChain {
-            // 1-based clusters: cluster n → ca_off + (n * clusterSize)
-            // According to VERIFICATION.md: cluster 1 = clusterAreaStart + clusterSize
-            // This means formula is: clusterAreaStart + (clusterNumber * clusterSize)
+            // 0-based cluster addressing: cluster n → caOffset + n × clusterSize
+            // cluster 0 = reserved (FAT[0]=0x8000); cluster 1 = OS; cluster 2+ = banks.
+            // Verified against HD0.hda (May 2026) and EmaxIIFileSystem.swift.
             let physicalOffset = clusterAreaStart + UInt64(cluster) * UInt64(clusterSize)
             handle.seek(toFileOffset: physicalOffset)
             data.append(handle.readData(ofLength: clusterSize))

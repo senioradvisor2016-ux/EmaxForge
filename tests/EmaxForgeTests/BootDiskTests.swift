@@ -123,19 +123,29 @@ final class BootDiskTests: XCTestCase {
     // MARK: - Cluster Size Tests
     
     func testClusterSizeForDiskSize() throws {
-        // Based on standard tools templates
-        let clusterSizes: [Int64: Int] = [
-            96 * 1024 * 1024: 8192,      // 96 MB → 8 KB clusters
-            239 * 1024 * 1024: 16384,    // 239 MB → 16 KB clusters
-            481 * 1024 * 1024: 32768,    // 481 MB → 32 KB clusters
-            633 * 1024 * 1024: 32768,    // 633 MB → 32 KB clusters
-            962 * 1024 * 1024: 65536     // 962 MB → 64 KB clusters
+        // Cluster sizes from EMXP-verified DiskFormatter templates (DiskFormatter.swift).
+        // Stored at header[0x04]; used to calculate: offset = caOffset + cluster × clusterSize.
+        // 239 MB verified against HD0.hda (header[0x04] = 0x77800 = 489472, % 512 = 0).
+        // 96 MB and 962 MB values come from DiskFormatter templates; they are 256-byte
+        // aligned but NOT 512-byte (sector) aligned (196352 % 512 = 256, 1969408 % 512 = 256).
+        //   96 MB → 196352  (≈192 KB per cluster)
+        //  239 MB → 489472  (= 239 × 2048 bytes, ≈478 KB per cluster) — verified HD0.hda
+        //  481 MB → 984576  (≈962 KB per cluster)
+        //  633 MB → 489472  (same cluster size as 239 MB)
+        //  962 MB → 1969408 (≈1924 KB per cluster)
+        let clusterSizes: [Int: Int] = [
+            96:  196352,
+            239: 489472,
+            481: 984576,
+            633: 489472,
+            962: 1969408,
         ]
-        
-        for (diskSize, expectedCluster) in clusterSizes {
-            XCTAssertGreaterThan(expectedCluster, 0, "Cluster size for \(diskSize) should be positive")
-            XCTAssertTrue([8192, 16384, 32768, 65536].contains(expectedCluster), 
-                         "Cluster size should be power of 2 between 8KB and 64KB")
+
+        for (diskMB, expectedCluster) in clusterSizes {
+            XCTAssertGreaterThan(expectedCluster, 0,
+                "Cluster size for \(diskMB) MB should be positive")
+            XCTAssertEqual(expectedCluster % 256, 0,
+                "Cluster size for \(diskMB) MB should be 256-byte aligned (got \(expectedCluster))")
         }
     }
     

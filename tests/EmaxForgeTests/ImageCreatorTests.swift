@@ -132,23 +132,46 @@ final class ImageCreatorTests: XCTestCase {
     }
 
     func testAllFiveSizesCreateCorrectly() throws {
+        // Per-size boot signatures from DiskFormatter templates (verified against EMXP).
+        // Each disk size has a distinct opaque byte pair at offset 0x1FE-0x1FF.
+        let bootSigs: [Int: (UInt8, UInt8)] = [
+            96:  (0xA1, 0x93),
+            239: (0x78, 0x82),
+            481: (0x65, 0x9F),
+            633: (0x79, 0x24),
+            962: (0xD7, 0xAD),
+        ]
         let sizes = [96, 239, 481, 633, 962]
         for mb in sizes {
             let data = makeFakeDisk(sizeMB: mb)
             let expected = mb * 1024 * 1024
             XCTAssertEqual(data.count, expected, "Size mismatch for \(mb) MB")
-            XCTAssertEqual(data[510], 0x78, "Boot sig byte 0 for \(mb) MB")
-            XCTAssertEqual(data[511], 0x82, "Boot sig byte 1 for \(mb) MB")
+            let (b0, b1) = bootSigs[mb]!
+            XCTAssertEqual(data[510], b0, "Boot sig byte 0 for \(mb) MB")
+            XCTAssertEqual(data[511], b1, "Boot sig byte 1 for \(mb) MB")
         }
     }
 
     // MARK: - Helper
 
+    /// Per-size boot signatures from DiskFormatter templates (verified against EMXP).
+    private func bootSig(forMB mb: Int) -> (UInt8, UInt8) {
+        switch mb {
+        case 96:  return (0xA1, 0x93)
+        case 239: return (0x78, 0x82)
+        case 481: return (0x65, 0x9F)
+        case 633: return (0x79, 0x24)
+        case 962: return (0xD7, 0xAD)
+        default:  return (0x78, 0x82)  // fallback: 239 MB signature
+        }
+    }
+
     private func makeFakeDisk(sizeMB: Int) -> Data {
         var data = Data(count: sizeMB * 1024 * 1024)
-        // Boot signature
-        data[510] = 0x78
-        data[511] = 0x82
+        // Per-size boot signature at offset 0x1FE (each size has a distinct opaque pair)
+        let (b0, b1) = bootSig(forMB: sizeMB)
+        data[510] = b0
+        data[511] = b1
         // FAT[0] = 0x8000 (reserved marker, verified against all EMXP templates and HD0.hda)
         data[0x400] = 0x00
         data[0x401] = 0x80

@@ -51,7 +51,8 @@ enum BankDataWriter {
     ///
     /// All field offsets verified empirically against HD0.hda and EMXP reference images (May 2026).
     struct DiskGeometry {
-        /// Bytes per cluster (computed, not stored directly in header — see note below)
+        /// Bytes per cluster. Read from header[0x04]; fallback to geometric computation if absent.
+        /// Note: values for 96 MB (196352) and 962 MB (1969408) are NOT sector-aligned (% 512 ≠ 0).
         let clusterSize: Int
         /// Number of 512-byte sectors occupied by the FAT
         let fatSectors: UInt32
@@ -121,16 +122,19 @@ enum BankDataWriter {
         let caStartSector = Int(header.readU32LE(at: 0x20))  // header +0x20: cluster area sector
         let totalClusters = Int(header.readU32LE(at: 0x24))  // header +0x24: total clusters
 
-        // Prefer clusterSize from header[0x04] (original EMAX II hardware format: HD0.hda).
-        // Fall back to geometry-based computation for EMXP-created disks.
+        // Cluster size from header[0x04] — MUST NOT require % 512 == 0.
+        // EMAX II format stores opaque values: 96 MB → 196352 (% 512 = 256),
+        // 962 MB → 1969408 (% 512 = 256). Only 239 MB and 481 MB are sector-aligned.
+        // Trust header[0x04] if non-zero and in a reasonable range; fall back to
+        // geometry-based computation only when it is absent (zero).
         let headerClusterSize = Int(header.readU32LE(at: 0x04))
         let clusterSize: Int
-        if headerClusterSize > 0 && headerClusterSize % 512 == 0 && headerClusterSize <= 4_194_304 {
+        if headerClusterSize > 0 && headerClusterSize <= 4_194_304 {
             clusterSize = headerClusterSize
         } else {
             let diskSizeSectors   = Int(fileSize / 512)
             let sectorsPerCluster = totalClusters > 0
-                ? (diskSizeSectors - caStartSector) / totalClusters
+                ? max((diskSizeSectors - caStartSector) / totalClusters, 1)
                 : 128
             clusterSize = sectorsPerCluster * 512
         }

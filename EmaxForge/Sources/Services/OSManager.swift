@@ -59,18 +59,20 @@ class OSManager {
         let magic = String(data: data[0..<4], encoding: .ascii) ?? ""
         guard magic == "EMX2" else { throw OSError.invalidDiskStructure }
 
-        // Prefer header[0x04] for clusterSize if it is a valid multiple of 512 and ≤ 4 MB.
-        // Real EMAX II hardware disks store clusterSize directly at 0x04.
-        // Fall back to geometry computation for EMXP-created disks.
+        // Cluster size from header[0x04]. Do NOT require % 512 == 0 — the EMAX II format
+        // stores opaque values that may not be sector-aligned (e.g. 96 MB → 196352, % 512 = 256;
+        // 962 MB → 1969408, % 512 = 256). Trust header[0x04] if non-zero and ≤ 4 MB.
         let caStartSector = Int(data.readU32LE(at: 0x20))
         let totalClusters = Int(data.readU32LE(at: 0x24))
         let headerCS = Int(data.readU32LE(at: 0x04))
         let clusterSize: Int
-        if headerCS > 0 && headerCS % 512 == 0 && headerCS <= 4_194_304 {
+        if headerCS > 0 && headerCS <= 4_194_304 {
             clusterSize = headerCS
         } else {
             let diskSizeSectors = Int(fileSize / 512)
-            let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
+            let sectorsPerCluster = totalClusters > 0
+                ? max((diskSizeSectors - caStartSector) / totalClusters, 1)
+                : 128
             clusterSize = sectorsPerCluster * 512
         }
 
