@@ -13,9 +13,9 @@ struct PresetInfo: Identifiable, Hashable {
     let velocityLayers: Int
     
     var keyRangeDescription: String {
-        "\(midiNoteName(keyRangeLow)) - \(midiNoteName(keyRangeHigh))"
+        "\(SampleFilenameTemplate.midiNoteName(keyRangeLow)) - \(SampleFilenameTemplate.midiNoteName(keyRangeHigh))"
     }
-    
+
     var voiceDescription: String {
         "\(voiceCount) voice\(voiceCount != 1 ? "s" : "")"
     }
@@ -24,12 +24,6 @@ struct PresetInfo: Identifiable, Hashable {
         samples.count
     }
     
-    private func midiNoteName(_ note: Int) -> String {
-        let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-        let octave = (note / 12) - 1
-        let name = names[note % 12]
-        return "\(name)\(octave)"
-    }
 }
 
 /// Analyzer that extracts preset information from a disk image

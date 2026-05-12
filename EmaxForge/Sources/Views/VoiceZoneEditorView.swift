@@ -286,10 +286,7 @@ struct VoiceZoneEditorView: View {
     }
 
     private func midiNoteName(_ midi: Int) -> String {
-        let names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
-        let note = names[midi % 12]
-        let octave = midi / 12 - 1
-        return "\(note)\(octave)"
+        SampleFilenameTemplate.midiNoteName(midi)
     }
 
     // MARK: - Load key map
