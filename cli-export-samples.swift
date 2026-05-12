@@ -141,54 +141,59 @@ struct BankEntry {
 func findBank(diskURL: URL, index: Int) throws -> (BankEntry, Int, UInt64) {
     let fileHandle = try FileHandle(forReadingFrom: diskURL)
     defer { try? fileHandle.close() }
-    
-    // Read boot sector
+
+    // Read EMAX II header (512 bytes at offset 0)
     fileHandle.seek(toFileOffset: 0)
-    let bootSector = fileHandle.readData(ofLength: 512)
-    
-    let clusterSize = Int(bootSector.readU32LE(at: 4))
-    let sectorsPerFAT = Int(bootSector.readU16LE(at: 22))
-    let rootEntries = Int(bootSector.readU16LE(at: 17))
-    let clusterAreaStartSector = bootSector.readU32LE(at: 0x20)
-    let clusterAreaStart = UInt64(clusterAreaStartSector) * 512
-    
-    // Read catalog
-    let catalogOffset = UInt64(sectorsPerFAT + 1) * 512
-    fileHandle.seek(toFileOffset: catalogOffset)
-    let catalogData = fileHandle.readData(ofLength: rootEntries * 32)
-    
-    var banks: [BankEntry] = []
-    var bankIndex = 1
-    
-    for i in 0..<rootEntries {
-        let entryOffset = i * 32
-        let nameData = catalogData.subdata(in: entryOffset..<(entryOffset + 16))
-        let name = String(data: nameData, encoding: .ascii)?
-            .trimmingCharacters(in: .whitespaces.union(.controlCharacters)) ?? ""
-        
-        guard !name.isEmpty else { continue }
-        
-        let cluster = catalogData.readU16LE(at: entryOffset + 24)
-        let flags = catalogData.readU16LE(at: entryOffset + 26)
-        
-        // Skip OS
-        if cluster == 1 && flags == 0x0081 {
-            continue
-        }
-        
-        // Valid bank
-        if cluster > 0 && flags == 0x0081 {
-            let entry = BankEntry(name: name, cluster: cluster, index: bankIndex)
-            banks.append(entry)
-            
-            if bankIndex == index {
-                return (entry, clusterSize, clusterAreaStart)
-            }
-            
-            bankIndex += 1
-        }
+    let header = fileHandle.readData(ofLength: 512)
+    guard header.count == 512,
+          String(data: header[0..<4], encoding: .ascii) == "EMX2" else {
+        throw NSError(domain: "EmaxForge", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Not an EMAX II disk image"])
     }
-    
+
+    // Header offsets (verified against EmaxIIFileSystem.swift)
+    let clusterSize         = Int(header.readU32LE(at: 4))
+    let bntStartSector      = Int(header.readU32LE(at: 0x10))
+    let maxBanks            = Int(header.readU32LE(at: 0x14))
+    let clusterAreaStartSec = Int(header.readU32LE(at: 0x20))
+    let clusterAreaStart    = UInt64(clusterAreaStartSec) * 512
+
+    // Read BNT (Bank Name Table / catalog)
+    let bntOffset = UInt64(bntStartSector) * 512
+    let bntSize   = (clusterAreaStartSec - bntStartSector) * 512
+    fileHandle.seek(toFileOffset: bntOffset)
+    let catalogData = fileHandle.readData(ofLength: min(bntSize, (maxBanks + 1) * 32))
+
+    var bankIndex = 1
+    let maxSlots = min(maxBanks + 1, catalogData.count / 32)
+
+    // BNT entry layout: name[0..15], startCluster(U16) at +16, flags at +26
+    for i in 0..<maxSlots {
+        let base = i * 32
+        guard base + 32 <= catalogData.count else { break }
+
+        let nameData = catalogData.subdata(in: base..<(base + 16))
+        guard !nameData.allSatisfy({ $0 == 0 || $0 == 0xFF }) else { continue }
+
+        let name = String(data: nameData, encoding: .ascii)?
+            .trimmingCharacters(in: .controlCharacters)
+            .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
+        guard !name.isEmpty else { continue }
+
+        let startCluster = catalogData.readU16LE(at: base + 16)
+        let flags        = catalogData.readU16LE(at: base + 26)
+
+        // 0x7800 = OS/boot entry — skip
+        if startCluster == 0x7800 { continue }
+        guard flags == 0x0081 else { continue }
+
+        let entry = BankEntry(name: name, cluster: startCluster, index: bankIndex)
+        if bankIndex == index {
+            return (entry, clusterSize, clusterAreaStart)
+        }
+        bankIndex += 1
+    }
+
     throw NSError(domain: "EmaxForge", code: 404, userInfo: [NSLocalizedDescriptionKey: "Bank \(index) not found"])
 }
 

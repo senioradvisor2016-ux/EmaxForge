@@ -128,65 +128,82 @@ enum ValidationIssue {
 func validateDisk(_ url: URL) throws -> [ValidationIssue] {
     let fileHandle = try FileHandle(forReadingFrom: url)
     defer { try? fileHandle.close() }
-    
+
     var issues: [ValidationIssue] = []
-    
-    // Read boot sector
+
+    // Read header sector (EMAX II format — 512 bytes at offset 0)
     fileHandle.seek(toFileOffset: 0)
-    let bootSector = fileHandle.readData(ofLength: 512)
-    
-    // 1. Boot signature
-    let sig1 = bootSector[0x1FE]
-    let sig2 = bootSector[0x1FF]
-    
-    if sig1 == 0 && sig2 == 0 {
-        issues.append(.bootSignatureMissing)
-    } else if sig1 != 0x78 || sig2 != 0x82 {
+    let header = fileHandle.readData(ofLength: 512)
+    guard header.count == 512 else { return [.invalidCatalog] }
+
+    // 1. Magic: "EMX2" at [0..3]
+    let magic = String(data: header[0..<4], encoding: .ascii) ?? ""
+    if magic != "EMX2" {
         issues.append(.bootSignatureWrong)
     }
-    
-    // 2. Cluster size (should be power of 2, reasonable range)
-    let clusterSize = Int(bootSector.readU32LE(at: 4))
-    if clusterSize < 512 || clusterSize > 2_000_000 || (clusterSize & (clusterSize - 1)) != 0 {
+
+    // 2. Cluster size — U32 LE at offset 4
+    //    EMAX II clusters are NOT required to be power-of-2 (e.g. 44032 = 86 × 512)
+    let clusterSize = Int(header.readU32LE(at: 4))
+    if clusterSize < 512 || clusterSize > 8_000_000 {
         issues.append(.invalidClusterSize)
     }
-    
-    // 3. FAT size
-    let sectorsPerFAT = Int(bootSector.readU16LE(at: 22))
-    if sectorsPerFAT < 1 || sectorsPerFAT > 1000 {
+
+    // 3. FAT sectors — U32 LE at offset 0x1C
+    let fatSectors = Int(header.readU32LE(at: 0x1C))
+    if fatSectors < 1 || fatSectors > 4096 {
         issues.append(.invalidFATSize)
     }
-    
-    // 4. Catalog check
-    let rootEntries = Int(bootSector.readU16LE(at: 17))
-    let catalogOffset = UInt64(sectorsPerFAT + 1) * 512
-    fileHandle.seek(toFileOffset: catalogOffset)
-    let catalogData = fileHandle.readData(ofLength: rootEntries * 32)
-    
-    var validEntries = 0
-    for i in 0..<rootEntries {
-        let entryOffset = i * 32
-        let nameData = catalogData.subdata(in: entryOffset..<(entryOffset + 16))
-        let name = String(data: nameData, encoding: .ascii)?
-            .trimmingCharacters(in: .whitespaces.union(.controlCharacters)) ?? ""
-        
-        if !name.isEmpty {
-            let cluster = catalogData.readU16LE(at: entryOffset + 24)
-            let flags = catalogData.readU16LE(at: entryOffset + 26)
-            
-            // Check flags
-            if flags != 0x0081 && cluster > 0 {
-                issues.append(.corruptBank(name: name))
-            }
-            
-            validEntries += 1
-        }
+
+    // 4. BNT (catalog) — starts at bntStartSector (U32 LE at 0x10)
+    let bntStartSector  = Int(header.readU32LE(at: 0x10))
+    let maxBanks        = Int(header.readU32LE(at: 0x14))
+    let clusterAreaStart = Int(header.readU32LE(at: 0x20))
+    let bntOffset       = UInt64(bntStartSector) * 512
+    let bntSize         = (clusterAreaStart - bntStartSector) * 512
+
+    if bntStartSector < 1 || maxBanks < 1 || bntSize <= 0 {
+        issues.append(.invalidCatalog)
+        return issues
     }
-    
-    if validEntries == 0 && rootEntries > 0 {
+
+    fileHandle.seek(toFileOffset: bntOffset)
+    let catalogData = fileHandle.readData(ofLength: min(bntSize, maxBanks * 32 + 32))
+
+    // BNT entry layout (32 bytes):
+    //   +00..+0F  name (16 bytes)
+    //   +10..+11  startCluster (U16 LE)
+    //   +12..+13  clusterCount (U16 LE)
+    //   +14..+15  numPresets (U16 LE)
+    //   +16..+17  fieldA
+    //   +18..+19  bankIndex
+    //   +1A..+1B  flags (0x0081 = valid bank)
+    //   +1C..+1F  zeros
+    var validEntries = 0
+    let maxSlots = min(maxBanks + 1, catalogData.count / 32)
+    for i in 0..<maxSlots {
+        let base = i * 32
+        guard base + 32 <= catalogData.count else { break }
+        let nameData = catalogData.subdata(in: base..<(base + 16))
+        guard !nameData.allSatisfy({ $0 == 0 || $0 == 0xFF }) else { continue }
+        let name = String(data: nameData, encoding: .ascii)?
+            .trimmingCharacters(in: .controlCharacters)
+            .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
+        guard !name.isEmpty else { continue }
+
+        let startCluster = catalogData.readU16LE(at: base + 16)
+        let flags        = catalogData.readU16LE(at: base + 26)
+
+        if startCluster != 0x7800 && flags != 0x0081 {
+            issues.append(.corruptBank(name: name))
+        }
+        validEntries += 1
+    }
+
+    if validEntries == 0 {
         issues.append(.invalidCatalog)
     }
-    
+
     return issues
 }
 
