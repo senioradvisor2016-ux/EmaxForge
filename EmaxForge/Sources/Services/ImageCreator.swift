@@ -423,12 +423,14 @@ class ImageCreator {
         let templatePath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("clawd/EmaxForge/EmaxForge/Resources/bootable_templates/\(templateFilename)")
         
-        guard FileManager.default.fileExists(atPath: templatePath.path) else {
-            print("⚠️  Template not found: \(templatePath.path)")
+        // Guard against 0-byte placeholder files (96/633/962 MB EZ2s are empty stubs on disk)
+        let blankTemplateSize = (try? FileManager.default.attributesOfItem(atPath: templatePath.path)[.size] as? Int) ?? 0
+        guard FileManager.default.fileExists(atPath: templatePath.path) && blankTemplateSize > 0 else {
+            print("⚠️  Template not found or empty (\(blankTemplateSize) bytes): \(templatePath.path)")
             print("   Falling back to legacy buildFromScratch...")
             return try createBlankImageLegacy(at: destinationURL, sizeMB: sizeMB)
         }
-        
+
         // Copy template
         print("📋 Copying standard tools template for blank disk: \(templateFilename)")
         try FileManager.default.copyItem(at: templatePath, to: destinationURL)
