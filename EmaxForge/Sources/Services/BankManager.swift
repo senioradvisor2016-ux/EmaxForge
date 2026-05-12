@@ -86,10 +86,23 @@ class BankManager {
             
             if name.lowercased() == bankName.lowercased() ||
                name.contains(bankName) || bankName.contains(name) {
-                // BNT layout: startCluster at +16, clusterCount at +18 (verified vs EmaxIIFileSystem.swift)
-                let cl  = Int(data.readU16LE(at: off + 16))
-                let cnt = Int(data.readU16LE(at: off + 18))
-                return (i, cl, cnt)
+                // BNT layout (verified vs BANK_HANDLING_ANALYSIS.md):
+                //   +0x10 (offset 16): bankIndex (0x7800=OS, (n-1)*256 user)
+                //   +0x12 (offset 18): startCluster — actual FAT cluster
+                let cl  = Int(data.readU16LE(at: off + 18))  // startCluster at +0x12
+                // Determine chain length by tracing FAT
+                var cnt = 0
+                var cur = cl
+                var seen = Set<Int>()
+                while cur > 0 && cur < data.count / 2 {
+                    guard !seen.contains(cur) else { break }
+                    seen.insert(cur)
+                    let nxt = Int(data.readU16LE(at: geo.fatOffset + cur * 2))
+                    cnt += 1
+                    if nxt == 0x7FFF || nxt == 0x8080 || nxt == 0x8000 || nxt == 0 { break }
+                    cur = nxt
+                }
+                return (i, cl, max(cnt, 1))
             }
         }
         return nil
@@ -278,9 +291,11 @@ class BankManager {
             let name = nameRaw.trimmingCharacters(in: .init(charactersIn: " \0"))
             guard !name.isEmpty else { continue }
 
-            let startCluster = Int(diskData.readU16LE(at: off + 16))
-            let clusterCount = Int(diskData.readU16LE(at: off + 18))
-            guard clusterCount > 0 else { continue }
+            // BNT layout: bankIndex at +0x10 (offset 16), startCluster at +0x12 (offset 18)
+            let bntBankIndex  = Int(diskData.readU16LE(at: off + 16))
+            if bntBankIndex == 0x7800 { continue }  // skip OS entry
+            let startCluster = Int(diskData.readU16LE(at: off + 18))  // +0x12: actual FAT cluster
+            guard startCluster > 0 else { continue }
 
             // Follow FAT chain to read data
             var data = Data()
@@ -348,12 +363,12 @@ class BankManager {
                 diskData[fatOff + 1] = UInt8((nextVal >> 8) & 0xFF)
             }
 
-            // Update BNT entry: startCluster and clusterCount
+            // Update BNT entry: startCluster at +0x12 (offset 18), bankIndex at +0x10 unchanged
             let bntOff = geo.bntOffset + bank.slot * 32
-            diskData[bntOff + 16] = UInt8(newStart & 0xFF)
-            diskData[bntOff + 17] = UInt8((newStart >> 8) & 0xFF)
-            diskData[bntOff + 18] = UInt8(clustersNeeded & 0xFF)
-            diskData[bntOff + 19] = UInt8((clustersNeeded >> 8) & 0xFF)
+            // +0x10 (offset 16): bankIndex — preserved unchanged (don't overwrite)
+            // +0x12 (offset 18): startCluster — update to new location after defrag
+            diskData[bntOff + 18] = UInt8(newStart & 0xFF)
+            diskData[bntOff + 19] = UInt8((newStart >> 8) & 0xFF)
 
             if newStart != oldStart { totalMoved += clustersNeeded }
             nextCluster += clustersNeeded

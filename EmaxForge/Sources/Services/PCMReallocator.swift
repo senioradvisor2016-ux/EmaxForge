@@ -198,11 +198,13 @@ class PCMReallocator {
         catalogIndex: Int,
         newCount: UInt16
     ) {
-        // BNT entry layout: +0x10=startCluster, +0x12=clusterCount, +0x14=numPresets (verified)
-        let entryOffset = geo.bntOffset + UInt64(catalogIndex * 32)
-        handle.seek(toFileOffset: entryOffset + 18)   // +0x12 = clusterCount (NOT +0x14 which is numPresets)
-        var countLE = newCount.littleEndian
-        handle.write(Data(bytes: &countLE, count: 2))
+        // NOTE: The EMAX II BNT entry does NOT store a cluster count field.
+        // BNT layout (verified vs BANK_HANDLING_ANALYSIS.md):
+        //   +0x10 (offset 16): bankIndex (read-only here)
+        //   +0x12 (offset 18): startCluster (unchanged — reallocation keeps the same first cluster)
+        // The FAT chain is the authoritative source for cluster count.
+        // This function is intentionally a no-op: we do not write clusterCount to the BNT.
+        _ = (handle, geo, catalogIndex, newCount)  // suppress unused-variable warnings
     }
 
     // MARK: - Hitta lediga kluster i FAT

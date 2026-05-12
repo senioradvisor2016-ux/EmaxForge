@@ -8,20 +8,15 @@ import Foundation
 ///   BNT:     sector header[0x10]*512, 32-byte entries, max header[0x14] banks
 ///   Clusters: sector header[0x20]*512, size computed from (diskSectors-caSector)/totalClusters
 ///
-/// BNT entry layout (32 bytes) — verified against EmaxIIFileSystem.swift and EmaxII-02.ez2:
+/// BNT entry layout (32 bytes) — verified vs BANK_HANDLING_ANALYSIS.md + analyze_image.swift:
 ///   [0-15]:  name, ASCII space/null padded to 16 bytes
-///   [16-17]: startCluster (U16 LE, 0-based cluster index; 0x7800 = OS special marker)
-///   [18-19]: clusterCount (U16 LE, must match FAT chain length)
+///   [16-17]: bankIndex (U16 LE; 0x7800=OS, (slotIndex-1)*256 for user banks)
+///   [18-19]: startCluster (U16 LE, actual FAT cluster index — what the EMAX II reads!)
 ///   [20-21]: numPresets (U16 LE; set to 0 on import — written by EMAX II at load time)
-///   [22-23]: f22 (unknown EMAX II metadata; range 0-127; set to 0 on import — verified safe)
-///   [24-25]: bankIndex (idx, preset address; set to 0 on import — verified safe)
-///   [26-27]: flags = 0x0081 (ALWAYS)
+///   [22-23]: fieldA (unknown metadata; set to 0 on import — safe)
+///   [24-25]: fieldB (unknown metadata; set to 0 on import — safe)
+///   [26-27]: flags = 0x0081 (ALWAYS for user banks)
 ///   [28-31]: zeros
-///
-/// NOTE: f22/bankIndex are preserved when reading disks but written as 0x0000 on import.
-/// Analysis (Mar 21 2026) shows no correlation to bank size, cluster count, or preset count.
-/// Current hypothesis: EMAX II runtime metadata (caching hints) or EMXP-specific fields.
-/// EmaxForge-created disks with f22=bankIndex=0 work correctly — fields are not critical for boot/load.
 ///
 /// Cluster offset formula: ca_off + cluster * clusterSize  (0-based, verified vs EmaxIIFileSystem.swift)
 class BankImporter {
@@ -263,32 +258,33 @@ class BankImporter {
         let nameData   = (paddedName + "\0\0").data(using: .ascii) ?? Data(count: 16)
         bntEntry.replaceSubrange(0..<16, with: nameData.prefix(16))
 
-        // BNT entry layout (verified vs EmaxIIFileSystem.swift and reference disk EmaxII-02.ez2):
+        // BNT entry layout (verified vs BANK_HANDLING_ANALYSIS.md and analyze_image.swift):
         //   +00..+0F  name, ASCII, space/null padded to 16 bytes
-        //   +10..+11  startCluster (U16 LE, 0-based cluster index)
-        //   +12..+13  clusterCount (U16 LE, must match FAT chain length)
+        //   +10..+11  bankIndex    (U16 LE: (slotIndex-1)*256 for user banks)
+        //   +12..+13  startCluster (U16 LE: actual FAT cluster — what EMAX II hardware reads!)
         //   +14..+15  numPresets   (U16 LE, set to 0 — EMAX II updates at load time)
-        //   +16..+17  f22          (varies, set to 0 on import)
-        //   +18..+19  bankIndex    (idx/preset address, set to 0 on import)
+        //   +16..+17  fieldA       (unknown, set to 0 on import — safe)
+        //   +18..+19  fieldB       (unknown, set to 0 on import — safe)
         //   +1A..+1B  flags = 0x0081 (active bank entry, ALWAYS)
         //   +1C..+1F  zeros
 
-        // [16-17]: startCluster (0-based cluster index of first bank cluster)
-        bntEntry.writeU16LE(UInt16(allocated[0]), at: 16)
+        // [16-17]: bankIndex — (slotIndex-1)*256 per EMAX II convention (slot 1→0x0000, slot 2→0x0100, ...)
+        let userBankOrdinal = max(0, slotIndex - 1)  // 0-based: first user bank = 0
+        bntEntry.writeU16LE(UInt16(userBankOrdinal * 256), at: 16)
 
-        // [18-19]: clusterCount (must match FAT chain length)
-        bntEntry.writeU16LE(UInt16(allocated.count), at: 18)
+        // [18-19]: startCluster (the actual FAT start cluster — EMAX II hardware reads this field)
+        bntEntry.writeU16LE(UInt16(allocated[0]), at: 18)
 
         // [20-21]: numPresets — set to 0 on import (EMAX II updates this field at load time)
         bntEntry.writeU16LE(0x0000, at: 20)
 
-        // [22-23]: f22 — set to 0 on import
+        // [22-23]: fieldA — set to 0 on import (safe per BANK_HANDLING_ANALYSIS.md)
         bntEntry.writeU16LE(0x0000, at: 22)
 
-        // [24-25]: bankIndex — set to 0 on import
+        // [24-25]: fieldB — set to 0 on import (safe per BANK_HANDLING_ANALYSIS.md)
         bntEntry.writeU16LE(0x0000, at: 24)
 
-        // [26-27]: flags = 0x0081 (active entry, ALWAYS this value)
+        // [26-27]: flags = 0x0081 (active entry, ALWAYS this value for user banks)
         bntEntry.writeU16LE(0x0081, at: 26)
 
         // [28-31]: zeros (already zeroed)

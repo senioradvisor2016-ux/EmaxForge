@@ -65,7 +65,7 @@ struct SampleAnalyzer {
         var totalSize: Int64 = 0
         
         // Process each bank
-        for bank in fs.banks where bank.startCluster != 0x7800 { // Skip OS (OS uses 0x7800 marker)
+        for bank in fs.banks where bank.bankIndex != 0x7800 { // Skip OS (OS has bankIndex=0x7800 at BNT+0x10)
             if let bankSamples = try? extractSamplesFromBank(bank, fs: fs, imageURL: imageURL) {
                 allSamples.append(contentsOf: bankSamples)
             }

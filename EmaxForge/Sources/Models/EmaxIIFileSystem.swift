@@ -17,24 +17,34 @@ struct EmaxIIFileSystem {
     /// Excludes FAT[0] reserved marker (0x8000) and free entries (0x0000).
     var usedClusters: Int { fat.filter { $0 != 0x0000 && $0 != 0x8000 }.count }
     var freeClusters: Int { fat.filter { $0 == 0 }.count }
-    /// OS entry uses startCluster=0x7800 as special marker (verified against EmaxII-02.ez2)
-    var hasOS: Bool { banks.contains { $0.startCluster == 0x7800 } }
-    var osName: String? { banks.first { $0.startCluster == 0x7800 }?.name }
-    /// Banks excluding OS entry (OS uses startCluster=0x7800 marker)
-    var userBanks: [BankCatalogEntry] { banks.filter { $0.startCluster != 0x7800 } }
+    /// OS entry uses bankIndex=0x7800 as special marker (verified against EmaxII-02.ez2 and BANK_HANDLING_ANALYSIS.md)
+    var hasOS: Bool { banks.contains { $0.bankIndex == 0x7800 } }
+    var osName: String? { banks.first { $0.bankIndex == 0x7800 }?.name }
+    /// Banks excluding OS entry (OS has bankIndex=0x7800 at BNT+0x10)
+    var userBanks: [BankCatalogEntry] { banks.filter { $0.bankIndex != 0x7800 } }
     
     /// Physical byte offset where cluster area begins
     var clusterAreaStartOffset: UInt64 { UInt64(clusterAreaStartSector) * 512 }
 }
 
 /// A single entry in the bank catalog (32 bytes at bntStartSector × 512;
-/// sector varies by disk size: 96MB→9, 239MB→8, 481MB→9, 633MB→11, 962MB→12)
+/// sector varies by disk size: 96MB→8, 481MB→9, 633MB→11, 962MB→12).
+///
+/// BNT entry layout (verified vs BANK_HANDLING_ANALYSIS.md + analyze_image.swift):
+///   +00..+0F  name (16 bytes, ASCII, null/space-padded)
+///   +10..+11  bankIndex   — 0x7800 = OS special marker; (n-1)*256 for user banks
+///   +12..+13  startCluster — actual FAT cluster index (1=OS, 2+ for user banks)
+///   +14..+15  numPresets
+///   +16..+17  fieldA (unknown EMAX II metadata)
+///   +18..+19  fieldB (unknown EMAX II metadata)
+///   +1A..+1B  flags — 0x0080=OS, 0x0081=active user bank
+///   +1C..+1F  zeros
 struct BankCatalogEntry: Identifiable, Hashable {
     let id = UUID()
     let catalogIndex: Int
     let name: String
-    let bankIndex: UInt16
-    let startCluster: UInt16
+    let bankIndex: UInt16    // BNT +0x10: 0x7800=OS, (n-1)*256 for user banks
+    let startCluster: UInt16 // BNT +0x12: actual FAT cluster (1=OS, 2+=user banks)
     let numPresets: UInt16
     let fieldA: UInt16
     let fieldB: UInt16
@@ -323,33 +333,38 @@ enum EmaxIIParser {
                 .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
             guard !name.isEmpty else { break }
             
-            // BNT entry layout verified against EmaxII-02.ez2 reference disk:
+            // BNT entry layout (verified vs BANK_HANDLING_ANALYSIS.md and analyze_image.swift):
             //   +00..+0F  name (16 bytes)
-            //   +10..+11  startCluster
-            //   +12..+13  clusterCount
+            //   +10..+11  bankIndex  — 0x7800=OS marker, 0x0000/0x0100/0x0200...=user banks
+            //   +12..+13  startCluster — actual FAT cluster (1=OS, 2+=user banks)
             //   +14..+15  numPresets
-            //   +16..+17  f22 (unknown)
-            //   +18..+19  idx (preset address, 0x0200 per slot)
-            //   +1A..+1B  flags = 0x0081
+            //   +16..+17  fieldA (unknown)
+            //   +18..+19  fieldB (unknown)
+            //   +1A..+1B  flags = 0x0080 (OS) / 0x0081 (user bank)
             //   +1C..+1F  zeros
-            let startClusterRaw = entry.readU16LE(at: 16)
-            // OS entry uses 0x7800 as startCluster marker — allow it; skip 0xFFFF invalid
-            if startClusterRaw == 0xFFFF { continue }
-            
-            let bankIndex = entry.readU16LE(at: 24)   // idx = preset address
-            let startCluster = entry.readU16LE(at: 16)
+            let bankIndex = entry.readU16LE(at: 16)
+            // OS has bankIndex=0x7800; skip 0xFFFF (deleted/invalid slot)
+            if bankIndex == 0xFFFF { continue }
+
+            let startCluster = entry.readU16LE(at: 18) // actual FAT start cluster
             let numPresets = entry.readU16LE(at: 20)
             let fieldA = entry.readU16LE(at: 22)
-            let fieldB = entry.readU16LE(at: 18)       // clusterCount
+            let fieldB = entry.readU16LE(at: 24)
             let flags = entry[26]
-            
-            let chain = traceChain(fat: fat, start: Int(startCluster))
+
+            // OS entry: don't trace FAT — it's at cluster 1 by definition (special marker)
+            let chain: [Int]
+            if bankIndex == 0x7800 {
+                chain = startCluster > 0 ? [Int(startCluster)] : [1]
+            } else {
+                chain = traceChain(fat: fat, start: Int(startCluster))
+            }
             
             banks.append(BankCatalogEntry(
                 catalogIndex: i,
                 name: name,
-                bankIndex: bankIndex,
-                startCluster: startCluster,
+                bankIndex: bankIndex,      // +0x10: 0x7800=OS, (n-1)*256 for user banks
+                startCluster: startCluster, // +0x12: actual FAT cluster index
                 numPresets: numPresets,
                 fieldA: fieldA,
                 fieldB: fieldB,
@@ -767,14 +782,17 @@ enum EmaxIIParser {
     // MARK: FAT chain tracing
     
     private static func traceChain(fat: [UInt16], start: Int) -> [Int] {
+        guard start > 0, start < fat.count else { return [] }
         var chain = [start]
         var current = start
         var seen = Set([current])
-        
+
         while current < fat.count {
             let next = Int(fat[current])
-            if next == 0x7FFF || next == 0x8080 || next == 0 { break }  // 0x8080 = compat EOC
-            if seen.contains(next) { break }
+            // 0x7FFF = standard EOC, 0x8080 = compat EOC, 0x8000 = reserved (FAT[0] marker)
+            // 0x0000 = free cluster (broken chain)
+            if next == 0x7FFF || next == 0x8080 || next == 0x8000 || next == 0 { break }
+            if seen.contains(next) { break }  // cycle guard
             seen.insert(next)
             chain.append(next)
             current = next

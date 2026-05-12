@@ -81,7 +81,6 @@ class BankExporter {
         }
         
         var foundCluster: Int?
-        var foundClusterCount: Int?
         let maxSlots = min(maxBanks + 1, bntSize / 32)
         
         for i in 0..<maxSlots {
@@ -102,37 +101,35 @@ class BankExporter {
                 .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
             
             if name.lowercased() == bankName.lowercased() {
-                // BNT layout: startCluster at +16, clusterCount at +18
-                foundCluster = Int(entry.readU16LE(at: 16))
-                foundClusterCount = Int(entry.readU16LE(at: 18))
+                // BNT layout (verified vs BANK_HANDLING_ANALYSIS.md):
+                //   +0x10 (offset 16): bankIndex (0x7800=OS, (n-1)*256 user banks)
+                //   +0x12 (offset 18): startCluster — actual FAT cluster
+                let bntBankIdx = Int(entry.readU16LE(at: 16))
+                if bntBankIdx == 0x7800 { continue }  // skip OS
+                foundCluster = Int(entry.readU16LE(at: 18))  // actual startCluster
                 break
             }
         }
-        
-        guard let startCluster = foundCluster else {
+
+        guard let startCluster = foundCluster, startCluster > 0 else {
             throw ExportError.bankNotFound(bankName)
         }
-        
+
         // --- Follow FAT chain ---
         var clusters = [Int]()
         var current = startCluster
         let fatEntryCount = fatSize / 2
-        
-        while current >= 0 && current < fatEntryCount && clusters.count < 10000 {
+
+        while current > 0 && current < fatEntryCount && clusters.count < 10000 {
             clusters.append(current)
-            
+
             let next = Int(fatData.readU16LE(at: current * 2))
             if next == 0x7FFF { break }  // end-of-chain (EMAX II hardware standard)
-            if next == 0x8080 { break }  // compat EOC (old BankImporter format)
+            if next == 0x8080 { break }  // compat EOC
             if next == 0x8000 { break }  // reserved
             if next == 0x0000 { break }  // free (broken chain)
             if next == current { break }  // loop
             current = next
-        }
-        
-        // Sanity check against BNT cluster count
-        if let bntCount = foundClusterCount, bntCount > 0 && clusters.count != bntCount {
-            print("⚠️  FAT chain (\(clusters.count)) != BNT f20 (\(bntCount)) for '\(bankName)'")
         }
         
         // --- Read bank data (0-based cluster addressing: ca_off + n×clusterSize) ---

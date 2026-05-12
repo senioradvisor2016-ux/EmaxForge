@@ -414,18 +414,17 @@ class BankMerger {
         // --- Write target bank data back ---
         // Build a synthetic entry with the updated cluster chain so BankDataWriter can write it
         // Build updated entry with the new cluster chain for BankDataWriter.
-        // BNT layout (verified May 2026): +0x10=startCluster, +0x12=clusterCount,
-        //   +0x14=numPresets, +0x16=fieldA(f22), +0x18=bankIndex, +0x1A=flags.
-        // fieldB stores the clusterCount read from +0x12; startCluster from +0x10.
-        // BankDataWriter only uses clusterChain for writing — BNT update is done by updateBNTClusterCount.
+        // BNT layout (verified vs BANK_HANDLING_ANALYSIS.md):
+        //   +0x10=bankIndex, +0x12=startCluster, +0x14=numPresets, +0x16=fieldA, +0x18=fieldB, +0x1A=flags.
+        // BankDataWriter only uses clusterChain for writing — FAT chain is authoritative for size.
         let updatedEntry = BankCatalogEntry(
             catalogIndex: targetEntry.catalogIndex,
             name: targetEntry.name,
-            bankIndex: targetEntry.bankIndex,          // BNT +0x18
-            startCluster: targetEntry.startCluster,    // BNT +0x10
-            numPresets: targetEntry.numPresets,         // BNT +0x14 (preset count, not cluster count)
-            fieldA: targetEntry.fieldA,                 // BNT +0x16 (f22)
-            fieldB: UInt16(finalClusterChain.count),   // BNT +0x12 (clusterCount) — updated
+            bankIndex: targetEntry.bankIndex,          // BNT +0x10: bankIndex unchanged
+            startCluster: targetEntry.startCluster,    // BNT +0x12: startCluster unchanged
+            numPresets: targetEntry.numPresets,         // BNT +0x14: numPresets unchanged
+            fieldA: targetEntry.fieldA,                 // BNT +0x16: fieldA unchanged
+            fieldB: targetEntry.fieldB,                 // BNT +0x18: fieldB unchanged
             flags: targetEntry.flags,
             clusterChain: finalClusterChain,
             sizeBytes: targetData.count
@@ -532,14 +531,12 @@ class BankMerger {
             handle.synchronizeFile()
             handle.closeFile()
         }
-        // BNT entry for catalogIndex is at geo.bntOffset + catalogIndex * 32.
-        // clusterCount is at +0x12 (BNT layout verified against HD0.hda May 2026):
-        //   +0x10 startCluster, +0x12 clusterCount, +0x14 numPresets
-        let entryOffset = geo.bntOffset + UInt64(catalogIndex * 32)
-        handle.seek(toFileOffset: entryOffset + 0x12)
-        var countBytes = Data(count: 2)
-        bm_writeU16LE(UInt16(newCount), into: &countBytes, at: 0)
-        handle.write(countBytes)
+        // NOTE: The BNT does NOT have a cluster count field (verified vs BANK_HANDLING_ANALYSIS.md).
+        // BNT layout: +0x10=bankIndex, +0x12=startCluster, +0x14=numPresets
+        // The FAT chain is authoritative for cluster count. No BNT field needs updating.
+        _ = (catalogIndex, newCount)  // no-op: suppress unused-variable warnings
+        let entryOffset = UInt64(0)  // unused
+        _ = entryOffset
     }
 }
 

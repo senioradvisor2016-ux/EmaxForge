@@ -127,12 +127,12 @@ struct BankExtractor {
             let flags = entry.readU16LE(at: 26)
             guard flags == 0x0081 else { continue }
 
-            // BNT entry layout (verified against EmaxIIFileSystem.swift):
+            // BNT entry layout (verified vs BANK_HANDLING_ANALYSIS.md + analyze_image.swift):
             //   +00..+0F  name (16 bytes ASCII, space/null padded)
-            //   +10..+11  startCluster  (U16 LE)  — offset 16
-            //   +12..+13  clusterCount  (U16 LE)  — offset 18
-            //   +14..+15  numPresets    (U16 LE)  — offset 20
-            //   +18..+19  bankIndex     (U16 LE)  — offset 24
+            //   +10..+11  bankIndex    (U16 LE)  — 0x7800=OS, (n-1)*256 user banks
+            //   +12..+13  startCluster (U16 LE)  — actual FAT cluster (what EMAX II reads)
+            //   +14..+15  numPresets   (U16 LE)  — offset 20
+            //   +18..+19  fieldB       (U16 LE)  — offset 24 (unknown)
             //   +1A..+1B  flags = 0x0081          — offset 26
             let nameData = Data(entry[0..<16])
             let name = String(data: nameData, encoding: .ascii)?
@@ -140,34 +140,34 @@ struct BankExtractor {
                 ?? ""
             guard !name.isEmpty else { continue }
 
-            let startCluster = Int(entry.readU16LE(at: 16))   // +10
-            let clusterCount = Int(entry.readU16LE(at: 18))   // +12
+            let bankIndex   = Int(entry.readU16LE(at: 16))  // +10: bankIndex
+            let startCluster = Int(entry.readU16LE(at: 18)) // +12: actual FAT start cluster
 
-            guard clusterCount > 0, startCluster + clusterCount - 1 <= totalClusters else { continue }
+            // Skip OS entry (bankIndex=0x7800) — OS is not an extractable bank
+            if bankIndex == 0x7800 { continue }
+            guard startCluster > 0, startCluster < totalClusters else { continue }
 
-            // Follow FAT chain to read actual clusters (verify against f20)
+            // Follow FAT chain to determine actual cluster list
             var chain = [Int]()
             var cur = startCluster
-            while cur < fat.count && chain.count <= clusterCount + 10 {
+            while cur > 0, cur < fat.count, chain.count <= totalClusters {
                 chain.append(cur)
                 let next = Int(fat[cur])
-                if next == 0x7FFF { break }  // end-of-chain
-                if next == 0x8080 { break }  // compat EOC (old BankImporter format)
+                if next == 0x7FFF { break }  // standard EOC
+                if next == 0x8080 { break }  // compat EOC
                 if next == 0x8000 { break }  // reserved
                 if next == 0x0000 { break }  // free — chain broken
                 if next == cur   { break }  // self-loop guard
                 cur = next
             }
 
-            let actualClusters = chain.isEmpty ? clusterCount : chain.count
+            guard !chain.isEmpty else { continue }
 
-            // Read bank data (use FAT chain if valid, else use BNT cluster count)
+            // Read bank data via FAT chain
             var bankData = Data()
-            bankData.reserveCapacity(actualClusters * clusterSize)
+            bankData.reserveCapacity(chain.count * clusterSize)
 
-            let readChain = chain.isEmpty
-                ? Array(startCluster..<(startCluster + clusterCount))
-                : chain
+            let readChain = chain
 
             for cluster in readChain {
                 // 0-based cluster addressing (verified against EmaxIIFileSystem.swift):

@@ -173,24 +173,25 @@ class DiskVerifier {
             if isEmpty { continue }
             
             let name = String(data: entry[0..<16], encoding: .ascii)?.trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
-            // BNT field layout (verified empirically against HD0.hda, May 2026):
-            //   [16-17]: startCluster (0x7800 = OS special marker, 0-based for user banks)
-            //   [18-19]: clusterCount (stored hint; FAT chain is authoritative)
-            let startCluster = Int(entry.readU16LE(at: 16))
+            // BNT layout (verified vs BANK_HANDLING_ANALYSIS.md + analyze_image.swift):
+            //   [16-17]: bankIndex   (0x7800=OS marker, (n-1)*256 for user banks)
+            //   [18-19]: startCluster (actual FAT cluster — what EMAX II hardware reads)
+            let bankIdx      = Int(entry.readU16LE(at: 16))  // bankIndex
+            let startCluster = Int(entry.readU16LE(at: 18))  // actual startCluster
             let flags = entry.readU16LE(at: 26)
 
-            if i == 0 && name.contains("Software") {
+            if bankIdx == 0x7800 || (i == 0 && name.contains("Software")) {
                 osFound = true
-                // OS entry uses 0x7800 as startCluster special marker (not a real cluster)
-                let isValidOSEntry = startCluster == 0x7800 || startCluster == 0x0000
-                checks.append(Check(name: "OS entry", passed: isValidOSEntry, detail: "'\(name)' startCluster=0x\(String(startCluster, radix: 16)) flags=0x\(String(flags, radix: 16))"))
+                // OS entry: bankIndex=0x7800, startCluster=1
+                let isValidOSEntry = bankIdx == 0x7800 && startCluster == 1
+                checks.append(Check(name: "OS entry", passed: isValidOSEntry, detail: "'\(name)' bankIdx=0x\(String(bankIdx, radix: 16)) startCluster=\(startCluster) flags=0x\(String(flags, radix: 16))"))
             } else {
                 bankCount += 1
                 duplicateNames[name, default: 0] += 1
                 clusterConflicts[startCluster, default: []].append(i)
 
                 // Bank cluster should be in FAT range and allocated
-                if startCluster >= fatEntryCount {
+                if startCluster <= 0 || startCluster >= fatEntryCount {
                     warnings.append("Bank '\(name)' [slot \(i)] cluster \(startCluster) beyond FAT range (\(fatEntryCount))")
                 } else {
                     let fatVal = fatData.readU16LE(at: startCluster * 2)
