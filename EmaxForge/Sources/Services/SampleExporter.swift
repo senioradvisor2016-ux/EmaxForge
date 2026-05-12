@@ -85,7 +85,8 @@ class SampleExporter {
             sampleName: sample.name,
             sampleIndex: sampleIndex,
             bankIndex: bankIndex,
-            date: Date()
+            date: Date(),
+            rootKey: sample.rootKey
         )
         let resolvedName = filenameTemplate.resolve(context: context)
         let outputURL = directory

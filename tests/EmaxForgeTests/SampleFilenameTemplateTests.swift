@@ -224,4 +224,100 @@ final class SampleFilenameTemplateTests: XCTestCase {
         let vars = SampleFilenameTemplate.variablesUsed(in: "plain_name")
         XCTAssertTrue(vars.isEmpty)
     }
+
+    // MARK: - {key} variable and midiNoteName
+
+    func testKeyVariableMiddleC() {
+        let t = SampleFilenameTemplate("{key}")
+        let ctx = SampleFilenameTemplate.Context(
+            bankName: "B", sampleName: "S", sampleIndex: 1, bankIndex: 1, date: Date(), rootKey: 60)
+        XCTAssertEqual(t.resolve(context: ctx), "C4", "MIDI 60 = C4")
+    }
+
+    func testKeyVariableA4() {
+        let t = SampleFilenameTemplate("{key}")
+        let ctx = SampleFilenameTemplate.Context(
+            bankName: "B", sampleName: "S", sampleIndex: 1, bankIndex: 1, date: Date(), rootKey: 69)
+        XCTAssertEqual(t.resolve(context: ctx), "A4", "MIDI 69 = A4")
+    }
+
+    func testKeyVariableG3() {
+        let t = SampleFilenameTemplate("{key}")
+        let ctx = SampleFilenameTemplate.Context(
+            bankName: "B", sampleName: "S", sampleIndex: 1, bankIndex: 1, date: Date(), rootKey: 55)
+        XCTAssertEqual(t.resolve(context: ctx), "G3", "MIDI 55 = G3")
+    }
+
+    func testKeyVariableIsEmptyWhenRootKeyUnknown() {
+        // rootKey = -1 → {key} resolves to "" which is then stripped
+        let t = SampleFilenameTemplate("{key}")
+        let ctx = SampleFilenameTemplate.Context(
+            bankName: "B", sampleName: "S", sampleIndex: 1, bankIndex: 1, date: Date(), rootKey: -1)
+        // Resolved name will be empty → falls back to "untitled"
+        XCTAssertEqual(t.resolve(context: ctx), "untitled",
+                       "{key} with rootKey=-1 should produce empty string, falling back to 'untitled'")
+    }
+
+    func testKeyVariableInCompositeTemplate() {
+        let t = SampleFilenameTemplate("{bank}_{key}_{sample}")
+        let ctx = SampleFilenameTemplate.Context(
+            bankName: "PIANO", sampleName: "GRAND", sampleIndex: 1, bankIndex: 1, date: Date(), rootKey: 60)
+        XCTAssertEqual(t.resolve(context: ctx), "PIANO_C4_GRAND")
+    }
+
+    func testDefaultRootKeyIsMinusOne() {
+        // Context without explicit rootKey defaults to -1 (unknown)
+        let ctx = SampleFilenameTemplate.Context(
+            bankName: "B", sampleName: "S", sampleIndex: 1, bankIndex: 1, date: Date())
+        XCTAssertEqual(ctx.rootKey, -1)
+    }
+
+    func testBankKeyAndSampleTemplate() {
+        let t = SampleFilenameTemplate.bankKeyAndSample
+        let ctx = SampleFilenameTemplate.Context(
+            bankName: "STRINGS", sampleName: "VIOLIN",
+            sampleIndex: 1, bankIndex: 1, date: Date(), rootKey: 69)
+        XCTAssertEqual(t.resolve(context: ctx), "STRINGS_A4_VIOLIN")
+    }
+
+    // MARK: - midiNoteName static utility
+
+    func testMidiNoteNameMiddleC() {
+        XCTAssertEqual(SampleFilenameTemplate.midiNoteName(60), "C4")
+    }
+
+    func testMidiNoteNameA4() {
+        XCTAssertEqual(SampleFilenameTemplate.midiNoteName(69), "A4")
+    }
+
+    func testMidiNoteNameLowestMIDI() {
+        XCTAssertEqual(SampleFilenameTemplate.midiNoteName(0), "C-1")
+    }
+
+    func testMidiNoteNameHighestMIDI() {
+        XCTAssertEqual(SampleFilenameTemplate.midiNoteName(127), "G9")
+    }
+
+    func testMidiNoteNameSharp() {
+        // MIDI 61 = C#4
+        XCTAssertEqual(SampleFilenameTemplate.midiNoteName(61), "C#4")
+    }
+
+    func testMidiNoteNameClampsBelowZero() {
+        // Negative input → clamp to 0 → "C-1"
+        XCTAssertEqual(SampleFilenameTemplate.midiNoteName(-5), "C-1")
+    }
+
+    func testMidiNoteNameClampsAbove127() {
+        XCTAssertEqual(SampleFilenameTemplate.midiNoteName(200), "G9")
+    }
+
+    func testIsValidReturnsTrueForKeyVar() {
+        XCTAssertTrue(SampleFilenameTemplate.isValid("{key}"))
+    }
+
+    func testVariablesUsedIncludesKey() {
+        let vars = SampleFilenameTemplate.variablesUsed(in: "{bank}_{key}_{sample}")
+        XCTAssertTrue(vars.contains("{key}"))
+    }
 }
