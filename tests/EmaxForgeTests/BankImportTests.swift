@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+@testable import EmaxForge
 
 /// Bank import / catalog tests
 /// Tests EB2 bank structure parsing, catalog offsets, and FAT chain logic.
@@ -51,17 +52,25 @@ final class BankImportTests: XCTestCase {
         XCTAssertEqual(firstBankOffset, 0x1220)
     }
 
-    // MARK: - BNT entry field offsets (verified from reference disk)
+    // MARK: - BNT entry field offsets (verified against EmaxIIFileSystem.swift layout)
 
     func testBNTEntryFieldOffsets() {
-        // GUITAR/FLUTE bank 1 from EmaxII-02.ez2:
-        // raw: 47 55 49 54 41 52 2f 46 4c 55 54 45 20 20 00 00
-        //      00 00 05 00 0f 00 68 00 16 00 81 00 00 00 00 00
+        // Synthetic 32-byte BNT entry for a bank "GUITAR/FLUTE" with
+        // startCluster=5, clusterCount=15, numPresets=0, f22=0x68, bankIndex=0x16.
+        // Layout per EmaxIIFileSystem.swift (the authoritative reference):
+        //   [0-15]:  name, ASCII, space/null padded to 16 bytes
+        //   [16-17]: startCluster (U16 LE, 0-based)
+        //   [18-19]: clusterCount (U16 LE)
+        //   [20-21]: numPresets   (U16 LE)
+        //   [22-23]: f22          (U16 LE, unknown metadata)
+        //   [24-25]: bankIndex    (U16 LE, idx/preset address)
+        //   [26-27]: flags = 0x0081
+        //   [28-31]: zeros
         let raw: [UInt8] = [
-            0x47, 0x55, 0x49, 0x54, 0x41, 0x52, 0x2f, 0x46,
-            0x4c, 0x55, 0x54, 0x45, 0x20, 0x20, 0x00, 0x00,
-            0x00, 0x00, 0x05, 0x00, 0x0f, 0x00, 0x68, 0x00,
-            0x16, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00
+            0x47, 0x55, 0x49, 0x54, 0x41, 0x52, 0x2f, 0x46,  // "GUITAR/F"
+            0x4c, 0x55, 0x54, 0x45, 0x20, 0x20, 0x00, 0x00,  // "LUTE  \0\0"
+            0x05, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x68, 0x00,  // startCluster=5, clusterCount=15, numPresets=0, f22=0x68
+            0x16, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00   // bankIndex=0x16, flags=0x0081, zeros
         ]
         let entry = Data(raw)
 
@@ -73,17 +82,17 @@ final class BankImportTests: XCTestCase {
         XCTAssertEqual(entry[14], 0x00)
         XCTAssertEqual(entry[15], 0x00)
 
-        // [16-17]: idx = 0x0000 (bank 1)
-        let idx = UInt16(entry[16]) | (UInt16(entry[17]) << 8)
-        XCTAssertEqual(idx, 0x0000)
+        // [16-17]: startCluster = 5 (0-based cluster index, per EmaxIIFileSystem.swift +0x10)
+        let startCluster = UInt16(entry[16]) | (UInt16(entry[17]) << 8)
+        XCTAssertEqual(startCluster, 5)
 
-        // [18-19]: start_cluster = 5
-        let sc = UInt16(entry[18]) | (UInt16(entry[19]) << 8)
-        XCTAssertEqual(sc, 5)
+        // [18-19]: clusterCount = 15 (per EmaxIIFileSystem.swift +0x12)
+        let clusterCount = UInt16(entry[18]) | (UInt16(entry[19]) << 8)
+        XCTAssertEqual(clusterCount, 15)
 
-        // [20-21]: cluster_count = 15
-        let cnt = UInt16(entry[20]) | (UInt16(entry[21]) << 8)
-        XCTAssertEqual(cnt, 15)
+        // [20-21]: numPresets = 0 (set to 0 on import; EMAX II updates at load time)
+        let numPresets = UInt16(entry[20]) | (UInt16(entry[21]) << 8)
+        XCTAssertEqual(numPresets, 0)
 
         // [26-27]: flags = 0x0081
         let flags = UInt16(entry[26]) | (UInt16(entry[27]) << 8)
@@ -103,15 +112,23 @@ final class BankImportTests: XCTestCase {
         XCTAssertEqual(endOfChain, 0x7FFF)
     }
 
+    func testFATCompatEndOfChainValue() {
+        // 0x8080 is the legacy EOC written by old BankImporter (prior to the May 2026 fix).
+        // All readers (EmaxIIFileSystem, BankExtractor, DiskInspectorService) now recognise it.
+        let compatEOC = UInt16(0x8080)
+        XCTAssertEqual(compatEOC, 0x8080)
+    }
+
     func testFATFreeClusterValue() {
         let free = UInt16(0x0000)
         XCTAssertEqual(free, 0x0000)
     }
 
     func testFATReservedValue() {
-        // FAT[0] is always reserved with this marker
-        let reserved = UInt16(0x8000)
-        XCTAssertEqual(reserved, 0x8000)
+        // 0x8000 is used as a reserved/special FAT entry marker on some EMXP-created disks.
+        // On original EMAX II hardware disks (e.g. HD0.hda), cluster 0 may be in use (FAT[0]=0x7FFF).
+        let reservedMarker = UInt16(0x8000)
+        XCTAssertEqual(reservedMarker, 0x8000)
     }
 
     func testFATOSChain() {
@@ -182,6 +199,124 @@ final class BankImportTests: XCTestCase {
         XCTAssertEqual(padded, "GUITAR/FLUTE  ")
     }
 
+    // MARK: - Import round-trip: FAT EOC written as 0x7FFF, readable by DiskInspectorService
+
+    func testImportedBankFATChainUsesStandardEOC() throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EOCTest_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let diskURL = tmpDir.appendingPathComponent("test.hda")
+        try makeMinimalEMX2Disk().write(to: diskURL)
+
+        var bank = Data(count: 1024)
+        bank[0] = 0x45; bank[1] = 0x42; bank[2] = 0x32
+        let bankURL = tmpDir.appendingPathComponent("TESTBANK.eb2")
+        try bank.write(to: bankURL)
+
+        let result = try BankImporter.importBank(eb2URL: bankURL, into: diskURL)
+        XCTAssertEqual(result.clustersUsed, 1)
+
+        // Read raw FAT and verify end-of-chain is 0x7FFF (not 0x8080)
+        let diskData = try Data(contentsOf: diskURL)
+        let fatOffset = 0x400
+        let clusterFATOffset = fatOffset + result.catalogIndex * 2  // wrong — use cluster index
+        // The FAT entry for the allocated cluster should be 0x7FFF.
+        // Result.catalogIndex is the BNT slot, not the cluster. We need the cluster from BNT.
+        let bntStartSector = 8  // from makeMinimalEMX2Disk
+        let bntEntryOffset = bntStartSector * 512 + result.catalogIndex * 32
+        let startCluster = Int(diskData.readU16LEat(bntEntryOffset + 16))
+        let fatEntry = diskData.readU16LEat(fatOffset + startCluster * 2)
+        XCTAssertEqual(fatEntry, 0x7FFF, "Imported bank FAT EOC must be 0x7FFF (standard), got 0x\(String(fatEntry, radix: 16))")
+    }
+
+    // MARK: - Duplicate import enforcement
+
+    func testDuplicateBankNameRejected() throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DupBankTest_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        // Build a minimal EMX2 disk (239MB geometry, 256 KB cluster size, 4-cluster FAT)
+        let diskURL = tmpDir.appendingPathComponent("test.hda")
+        let diskData = makeMinimalEMX2Disk()
+        try diskData.write(to: diskURL)
+
+        // Build a small fake bank (≤ 1 cluster = 256 KB)
+        var bank = Data(count: 1024)
+        bank[0] = 0x45; bank[1] = 0x42; bank[2] = 0x32
+
+        // First import: "MYSTBANK" — must succeed
+        let bank1URL = tmpDir.appendingPathComponent("MYSTBANK.eb2")
+        try bank.write(to: bank1URL)
+        _ = try BankImporter.importBank(eb2URL: bank1URL, into: diskURL)
+
+        // Second import with same name: must throw when allowDuplicate=false (default)
+        let bank2URL = tmpDir.appendingPathComponent("MYSTBANK.eb2")
+        XCTAssertThrowsError(
+            try BankImporter.importBank(eb2URL: bank2URL, into: diskURL, allowDuplicate: false)
+        ) { error in
+            guard case let BankImporter.ImportError.duplicateBankName(name) = error else {
+                XCTFail("Expected duplicateBankName, got \(error)")
+                return
+            }
+            XCTAssertEqual(name, "MYSTBANK")
+        }
+
+        // Third import with allowDuplicate=true: must succeed
+        XCTAssertNoThrow(
+            try BankImporter.importBank(eb2URL: bank2URL, into: diskURL, allowDuplicate: true)
+        )
+    }
+
+    // MARK: - Helpers
+
+    /// Build a minimal valid EMX2 disk image (small — just enough for BankImporter to parse).
+    /// Geometry: clusterSize=262144 (512B*512), 4 FAT sectors, BNT at sector 8, CA at sector 20, 100 clusters.
+    private func makeMinimalEMX2Disk() -> Data {
+        let clusterSize = 262_144        // 512 sectors * 512 bytes
+        let fatSectors  = 4
+        let bntSector   = 8
+        let caSector    = 20
+        let totalClusters = 100
+        let diskSize    = caSector * 512 + totalClusters * clusterSize  // ~25.6 MB
+
+        var disk = Data(count: diskSize)
+
+        // Header (sector 0)
+        disk[0] = 0x45; disk[1] = 0x4D; disk[2] = 0x58; disk[3] = 0x32  // EMX2
+        func writeU32(_ v: UInt32, at off: Int) {
+            disk[off]   = UInt8(v & 0xFF)
+            disk[off+1] = UInt8((v >> 8) & 0xFF)
+            disk[off+2] = UInt8((v >> 16) & 0xFF)
+            disk[off+3] = UInt8((v >> 24) & 0xFF)
+        }
+        writeU32(UInt32(clusterSize), at: 0x04)
+        writeU32(2,                   at: 0x0C)  // fatStartSector (ignored; FAT always at 0x400)
+        writeU32(UInt32(bntSector),   at: 0x10)
+        writeU32(90,                  at: 0x14)  // maxBanks
+        writeU32(2,                   at: 0x18)
+        writeU32(UInt32(fatSectors),  at: 0x1C)
+        writeU32(UInt32(caSector),    at: 0x20)
+        writeU32(UInt32(totalClusters), at: 0x24)
+
+        // FAT at 0x400: FAT[0]=0x8000, FAT[1]=0x7FFF (OS), rest free
+        disk[0x400] = 0x00; disk[0x401] = 0x80  // FAT[0] = 0x8000
+        disk[0x402] = 0xFF; disk[0x403] = 0x7F  // FAT[1] = 0x7FFF
+
+        // BNT slot 0: OS entry
+        let bntOff = bntSector * 512
+        let osName = Array("EMAX2 Software\0\0".utf8)
+        for (i, b) in osName.enumerated() { disk[bntOff + i] = b }
+        disk[bntOff + 16] = 0x00; disk[bntOff + 17] = 0x78  // startCluster = 0x7800
+        disk[bntOff + 18] = 1;    disk[bntOff + 19] = 0      // clusterCount = 1
+        disk[bntOff + 26] = 0x80; disk[bntOff + 27] = 0x00  // flags = 0x0080
+
+        return disk
+    }
+
     // MARK: - Synthetic bank round-trip
 
     func testSyntheticBankData() throws {
@@ -204,5 +339,14 @@ final class BankImportTests: XCTestCase {
         let read = try Data(contentsOf: url)
         XCTAssertEqual(read.count, 0x8000)
         XCTAssertEqual(read[0], 0x45)
+    }
+}
+
+// MARK: - Test helpers
+
+private extension Data {
+    func readU16LEat(_ offset: Int) -> UInt16 {
+        guard offset + 2 <= count else { return 0 }
+        return UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
     }
 }

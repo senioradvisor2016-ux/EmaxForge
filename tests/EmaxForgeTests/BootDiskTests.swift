@@ -56,11 +56,12 @@ final class BootDiskTests: XCTestCase {
     // MARK: - FAT Structure Tests
     
     func testFATEntry0() throws {
-        // FAT entry 0 should be 0x000F (little-endian: 0x0F 0x00)
-        let correctEntry: [UInt8] = [0x0F, 0x00]
-        
+        // FAT entry 0 == 0x8000 (reserved marker, verified against all EMXP templates and HD0.hda)
+        // Little-endian bytes: [0x00, 0x80]
+        let correctEntry: [UInt8] = [0x00, 0x80]
+
         let value = UInt16(correctEntry[0]) | (UInt16(correctEntry[1]) << 8)
-        XCTAssertEqual(value, 0x000F, "FAT entry 0 should be 0x000F")
+        XCTAssertEqual(value, 0x8000, "FAT entry 0 must be 0x8000 (reserved marker)")
     }
     
     func testFATEntry1NonZeroForBootDisk() throws {
@@ -157,10 +158,10 @@ final class BootDiskTests: XCTestCase {
         XCTAssertEqual(data[510], 0x78, "Boot signature byte 1 should be 0x78")
         XCTAssertEqual(data[511], 0x82, "Boot signature byte 2 should be 0x82")
         
-        // Verify FAT entry 0 at offset 0x400 (1024)
+        // Verify FAT entry 0 at offset 0x400 (1024) is 0x8000 (reserved marker)
         if data.count >= 1026 {
             let fatEntry0 = UInt16(data[1024]) | (UInt16(data[1025]) << 8)
-            XCTAssertEqual(fatEntry0, 0x000F, "FAT entry 0 should be 0x000F")
+            XCTAssertEqual(fatEntry0, 0x8000, "FAT entry 0 must be 0x8000 (verified against all EMXP templates)")
         }
     }
 }

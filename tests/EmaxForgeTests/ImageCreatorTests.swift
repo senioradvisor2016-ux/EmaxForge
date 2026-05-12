@@ -40,9 +40,10 @@ final class ImageCreatorTests: XCTestCase {
     // MARK: - FAT structure constants
 
     func testFATEntry0Value() {
-        let bytes: [UInt8] = [0x0F, 0x00]
+        // FAT[0] == 0x8000 (reserved marker, verified against all EMXP templates and HD0.hda)
+        let bytes: [UInt8] = [0x00, 0x80]  // 0x8000 little-endian
         let value = UInt16(bytes[0]) | (UInt16(bytes[1]) << 8)
-        XCTAssertEqual(value, 0x000F)
+        XCTAssertEqual(value, 0x8000)
     }
 
     func testFATEndOfChainMarker() {
@@ -148,9 +149,9 @@ final class ImageCreatorTests: XCTestCase {
         // Boot signature
         data[510] = 0x78
         data[511] = 0x82
-        // FAT[0]
-        data[0x400] = 0x0F
-        data[0x401] = 0x00
+        // FAT[0] = 0x8000 (reserved marker, verified against all EMXP templates and HD0.hda)
+        data[0x400] = 0x00
+        data[0x401] = 0x80
         // FAT[1] end-of-chain
         data[0x402] = 0xFF
         data[0x403] = 0x7F

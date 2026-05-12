@@ -277,12 +277,12 @@ final class DiskInspectorTests: XCTestCase {
         let name2 = "BANK2         "
         for (i, ch) in name2.utf8.prefix(14).enumerated() { image[slot2 + i] = ch }
         image[slot2 + 14] = 0x00; image[slot2 + 15] = 0x00
-        // idx = 0
-        image[slot2 + 16] = 0x00; image[slot2 + 17] = 0x00
-        // start_cluster = 5 (same as TESTBANK → duplicate!)
-        image[slot2 + 18] = 0x05; image[slot2 + 19] = 0x00
-        // cluster_count = 2
-        image[slot2 + 20] = 0x02; image[slot2 + 21] = 0x00
+        // startCluster = 5 (same as TESTBANK → duplicate allocation!)
+        image[slot2 + 16] = 0x05; image[slot2 + 17] = 0x00
+        // clusterCount = 2
+        image[slot2 + 18] = 0x02; image[slot2 + 19] = 0x00
+        // numPresets = 0
+        image[slot2 + 20] = 0x00; image[slot2 + 21] = 0x00
         // flags = 0x0081
         image[slot2 + 26] = 0x81; image[slot2 + 27] = 0x00
 
@@ -348,19 +348,27 @@ final class DiskInspectorTests: XCTestCase {
     // MARK: - GUITAR/FLUTE reference BNT entry
 
     func testReferenceGUITARFLUTEBankEntry() throws {
-        // Build image with the exact GUITAR/FLUTE BNT bytes from EmaxII-02.ez2
+        // Build image with a GUITAR/FLUTE BNT entry using the verified field layout.
+        // Layout per EmaxIIFileSystem.swift (empirically verified against HD0.hda, May 2026):
+        //   [0-15]:  name (16 bytes)
+        //   [16-17]: startCluster = 5 (0-based cluster index)
+        //   [18-19]: clusterCount = 15
+        //   [20-21]: numPresets = 0
+        //   [22-23]: f22 = 0x68
+        //   [24-25]: bankIndex = 0x16
+        //   [26-27]: flags = 0x0081
         var image = buildMinimalImage(withBootSig: true)
 
         // Set FAT chain for cluster 5→6→...→19→0x7FFF (15 clusters)
         for i in 5..<19 { image[0x400 + i*2] = UInt8(i + 1); image[0x400 + i*2 + 1] = 0x00 }
         image[0x400 + 19*2] = 0xFF; image[0x400 + 19*2 + 1] = 0x7F  // 0x7FFF
 
-        // Write the verified BNT entry (from EmaxII-02.ez2) at slot 1
+        // Write corrected BNT entry with startCluster=5 at offset 16, clusterCount=15 at offset 18
         let raw: [UInt8] = [
-            0x47, 0x55, 0x49, 0x54, 0x41, 0x52, 0x2F, 0x46,
-            0x4C, 0x55, 0x54, 0x45, 0x20, 0x20, 0x00, 0x00,
-            0x00, 0x00, 0x05, 0x00, 0x0F, 0x00, 0x68, 0x00,
-            0x16, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00
+            0x47, 0x55, 0x49, 0x54, 0x41, 0x52, 0x2F, 0x46,  // "GUITAR/F"
+            0x4C, 0x55, 0x54, 0x45, 0x20, 0x20, 0x00, 0x00,  // "LUTE  \0\0"
+            0x05, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x68, 0x00,  // startCluster=5, clusterCount=15, numPresets=0, f22=0x68
+            0x16, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00   // bankIndex=0x16, flags=0x0081, zeros
         ]
         let bntSlot1 = 9 * 512 + 1 * 32
         for (i, b) in raw.enumerated() { image[bntSlot1 + i] = b }
@@ -423,20 +431,20 @@ final class DiskInspectorTests: XCTestCase {
 
             // --- BNT entry at slot 1 (slot 0 = OS, skipped as all-zero) ---
             let slot1 = bntStartSector * 512 + 1 * 32
-            // name: "TESTBANK      \0\0" (14 + null + null)
+            // name: "TESTBANK      \0\0" (14 chars + 2 null bytes = 16 bytes)
             let name = "TESTBANK      "
             for (i, ch) in name.utf8.prefix(14).enumerated() { image[slot1 + i] = ch }
             image[slot1 + 14] = 0x00
             image[slot1 + 15] = 0x00
-            // +0x10 idx = 0
-            image.writeU16LE(0x0000, at: slot1 + 16)
-            // +0x12 start_cluster = 5
-            image.writeU16LE(5,      at: slot1 + 18)
-            // +0x14 cluster_count = 2
-            image.writeU16LE(2,      at: slot1 + 20)
+            // +0x10 startCluster = 5 (0-based, verified layout per EmaxIIFileSystem.swift)
+            image.writeU16LE(5,      at: slot1 + 16)
+            // +0x12 clusterCount = 2 (stored hint; FAT chain is authoritative)
+            image.writeU16LE(2,      at: slot1 + 18)
+            // +0x14 numPresets = 0
+            image.writeU16LE(0,      at: slot1 + 20)
             // +0x16 f22 = 0
             image.writeU16LE(0x0000, at: slot1 + 22)
-            // +0x18 f24 = 0
+            // +0x18 bankIndex = 0
             image.writeU16LE(0x0000, at: slot1 + 24)
             // +0x1A flags = 0x0081
             image.writeU16LE(0x0081, at: slot1 + 26)
