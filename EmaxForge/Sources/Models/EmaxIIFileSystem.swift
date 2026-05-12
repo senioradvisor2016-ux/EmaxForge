@@ -560,19 +560,23 @@ enum EmaxIIParser {
             
             var sampleRate = Int(data.readU16LE(at: base + EmaxIIFormat.paramSampleRate))
             if sampleRate < 8000 || sampleRate > 50000 { sampleRate = EmaxIIFormat.defaultSampleRate }
-            
+
             let loopStart = Int(data.readU32LE(at: base + EmaxIIFormat.paramLoopStart))
             let loopEnd = Int(data.readU32LE(at: base + EmaxIIFormat.paramLoopEnd))
-            
+
             let name = extractString(from: data, offset: base + EmaxIIFormat.paramName, length: 16)
-            
+
+            // Read actual original MIDI key stored at param +0x0A (0 = unset → default C4)
+            let storedKey = Int(data[base + EmaxIIFormat.paramOriginalKey])
+            let originalKey = (storedKey > 0 && storedKey <= 127) ? storedKey : 60
+
             params.append(SampleParameter(
                 index: i, name: name.isEmpty ? "Sample \(i + 1)" : name,
                 startAddress: startAddr, endAddress: endAddr,
                 sampleRate: sampleRate,
                 loopStart: loopStart, loopEnd: loopEnd,
                 hasLoop: loopEnd > loopStart && loopEnd > 0,
-                originalKey: 60 + (i % 12)
+                originalKey: originalKey
             ))
         }
         
