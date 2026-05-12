@@ -228,13 +228,67 @@ struct ContentView: View {
                     pcmData: sample.pcmData,
                     sampleRate: Double(sample.sampleRate),
                     sampleName: sample.name
-                ) { _ in
-                    // Save callback - TODO
+                ) { editedPCM in
+                    guard let imageURL = appState.selectedImage?.url else { return }
+                    let sampleIndex = sample.index
+                    let sampleName  = sample.name
+                    Task {
+                        do {
+                            let fs = try await EmaxIIParser.parseHDImageAsync(at: imageURL)
+                            guard let bank = fs.userBanks.first(where: { $0.name == bankName }) else {
+                                await MainActor.run {
+                                    appState.addActivity("Bank '\(bankName)' not found on disk", type: .error)
+                                }
+                                return
+                            }
+                            _ = try PCMReallocator.replaceSamplePCM(
+                                bankEntry: bank,
+                                sampleIndex: sampleIndex,
+                                newPCM: editedPCM,
+                                imageURL: imageURL
+                            )
+                            await MainActor.run {
+                                appState.addActivity("Sample '\(sampleName)' saved to \(bankName) ✓", type: .success)
+                            }
+                        } catch {
+                            await MainActor.run {
+                                appState.addActivity("Save failed: \(error.localizedDescription)", type: .error)
+                            }
+                        }
+                    }
                 }
-                
+
             case .presetEditor(let params, let presetName):
-                PresetEditorView(params: params, presetName: presetName) { _ in
-                    // Save callback - TODO
+                PresetEditorView(params: params, presetName: presetName) { editedParams in
+                    // presetName is the bank name; preset index defaults to 0
+                    // (mirrors BankBrowserView which initialises currentPresetIndex = 0).
+                    guard let imageURL = appState.selectedImage?.url else { return }
+                    Task {
+                        do {
+                            let fs = try await EmaxIIParser.parseHDImageAsync(at: imageURL)
+                            guard let bank = fs.userBanks.first(where: { $0.name == presetName }) else {
+                                await MainActor.run {
+                                    appState.addActivity("Bank '\(presetName)' not found on disk", type: .error)
+                                }
+                                return
+                            }
+                            let update = PresetWriteService.PresetUpdate(
+                                name: nil,
+                                voiceRecords: [editedParams.toData()],
+                                keyMap: nil
+                            )
+                            try PresetWriteService.updatePreset(
+                                at: 0, update: update, in: bank, imageURL: imageURL
+                            )
+                            await MainActor.run {
+                                appState.addActivity("Preset saved to \(presetName) ✓", type: .success)
+                            }
+                        } catch {
+                            await MainActor.run {
+                                appState.addActivity("Save failed: \(error.localizedDescription)", type: .error)
+                            }
+                        }
+                    }
                 }
                 
             case .slotManager:
