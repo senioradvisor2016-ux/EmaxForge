@@ -125,7 +125,7 @@ class OSManager {
             osCluster = 1
         }
         
-        // Read OS data (1-based clusters)
+        // Read OS data (0-based: cluster n → caOffset + n×clusterSize)
         let osOffset = geo.clusterOffset(osCluster!)
         let totalOSBytes = osClusters * geo.clusterSize
         

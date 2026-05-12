@@ -676,7 +676,8 @@ struct BankBrowserView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
-                    .disabled(entry.startCluster == 1) // Can't delete OS
+                    // OS entry (startCluster == 0x7800) is already excluded by userBanks;
+                    // no additional guard needed here.
                 }
                 
                 Divider()

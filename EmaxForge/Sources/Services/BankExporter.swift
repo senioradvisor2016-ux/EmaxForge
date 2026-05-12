@@ -128,7 +128,7 @@ class BankExporter {
             print("⚠️  FAT chain (\(clusters.count)) != BNT f20 (\(bntCount)) for '\(bankName)'")
         }
         
-        // --- Read bank data (1-based clusters) ---
+        // --- Read bank data (0-based cluster addressing: ca_off + n×clusterSize) ---
         var bankData = Data()
         bankData.reserveCapacity(clusters.count * clusterSize)
         

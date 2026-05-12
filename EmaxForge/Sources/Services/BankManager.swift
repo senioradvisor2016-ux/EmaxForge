@@ -189,7 +189,7 @@ class BankManager {
             }
             visited.insert(currentCluster)
             
-            // 1-based clusters
+            // 0-based: cluster n → caOffset + n×clusterSize (via geo.clusterOffset)
             let clusterOff = geo.clusterOffset(currentCluster)
             guard clusterOff + geo.clusterSize <= diskData.count else {
                 throw BankError.operationFailed("Cluster \(currentCluster) out of bounds")
