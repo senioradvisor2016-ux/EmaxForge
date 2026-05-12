@@ -98,12 +98,13 @@ class ImageValidator {
             return ValidationResult(isValid: false, checks: checks, errors: nil, errorCount: 0)
         }
         
+        // FAT[0] == 0x8000 (reserved marker, verified against all EMXP templates and HD0.hda)
         let fatEntry0 = UInt16(fatData[0]) | (UInt16(fatData[1]) << 8)
-        let fatValid = fatEntry0 == 0x000F || fatEntry0 == 0x8000
+        let fatValid = fatEntry0 == 0x8000
         checks.append(.init(
             name: "FAT header",
             passed: fatValid,
-            message: fatValid ? String(format: "0x%04X ✓", fatEntry0) : String(format: "0x%04X ✗ (expected 0x000F or 0x8000)", fatEntry0)
+            message: fatValid ? String(format: "0x%04X ✓", fatEntry0) : String(format: "0x%04X ✗ (expected 0x8000)", fatEntry0)
         ))
         
         // Check 4: BNT/Catalog entries (32-byte, offset from header[0x10])
