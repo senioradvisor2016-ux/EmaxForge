@@ -301,13 +301,22 @@ class BankManager {
             banks.append(BankRecord(slot: i, name: name, data: data, count: visited.count))
         }
 
-        // --- 2. Clear FAT (except OS slot 0) ---
+        // --- 2. Clear FAT, then restore reserved markers ---
+        // FAT[0] = 0x8000 (reserved, never a real cluster)
+        // FAT[1] = 0x7FFF (OS EOC — OS always lives at cluster 1, 0-based)
         let fatStart = geo.fatOffset
         let fatEnd   = min(fatStart + geo.fatSize, diskData.count)
         diskData.replaceSubrange(fatStart..<fatEnd, with: Data(count: fatEnd - fatStart))
+        // Restore FAT[0] reserved marker and OS chain
+        if fatStart + 4 <= diskData.count {
+            diskData[fatStart + 0] = 0x00; diskData[fatStart + 1] = 0x80  // FAT[0] = 0x8000
+            diskData[fatStart + 2] = 0xFF; diskData[fatStart + 3] = 0x7F  // FAT[1] = 0x7FFF (OS EOC)
+        }
 
-        // --- 3. Repack banks contiguously starting at cluster 0 ---
-        var nextCluster = 0
+        // --- 3. Repack banks contiguously starting at cluster 2 ---
+        // Cluster 0 is reserved (FAT[0] = 0x8000); cluster 1 is always the OS.
+        // User banks start at cluster 2.
+        var nextCluster = 2
         var totalMoved = 0
 
         for bank in banks {
