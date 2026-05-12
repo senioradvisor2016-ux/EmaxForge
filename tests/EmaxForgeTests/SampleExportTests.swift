@@ -238,4 +238,296 @@ final class SampleExportTests: XCTestCase {
     private func cleanup(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
     }
+
+    // MARK: - Stereo interleave (EMXP: "Create a STEREO file from the...")
+
+    /// Build a Data buffer from an array of Int16 LE values.
+    private func pcmFrom(_ samples: [Int16]) -> Data {
+        var d = Data(count: samples.count * 2)
+        for (i, s) in samples.enumerated() {
+            d[i * 2]     = UInt8(s & 0xFF)
+            d[i * 2 + 1] = UInt8((s >> 8) & 0xFF)
+        }
+        return d
+    }
+
+    /// Read a Data buffer back as an array of Int16 LE values.
+    private func pcmToArray(_ data: Data) -> [Int16] {
+        var out = [Int16]()
+        for i in stride(from: 0, to: data.count - 1, by: 2) {
+            let lo = Int16(data[i])
+            let hi = Int16(data[i + 1]) << 8
+            out.append(lo | hi)
+        }
+        return out
+    }
+
+    func testInterleaveEqualLengthBuffers() {
+        let left  = pcmFrom([100, 200, 300])
+        let right = pcmFrom([10, 20, 30])
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        XCTAssertEqual(stereo.count, 12, "3 frames × 2 channels × 2 bytes = 12 bytes")
+        let vals = pcmToArray(stereo)
+        // Expected: L0 R0 L1 R1 L2 R2
+        XCTAssertEqual(vals, [100, 10, 200, 20, 300, 30])
+    }
+
+    func testInterleaveLongerLeft() {
+        let left  = pcmFrom([1, 2, 3, 4])
+        let right = pcmFrom([10, 20])
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        XCTAssertEqual(stereo.count, 16, "4 frames × 2 ch × 2 bytes")
+        let vals = pcmToArray(stereo)
+        XCTAssertEqual(vals, [1, 10, 2, 20, 3, 0, 4, 0], "Right channel zero-padded")
+    }
+
+    func testInterleaveLongerRight() {
+        let left  = pcmFrom([5, 6])
+        let right = pcmFrom([50, 60, 70, 80])
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        XCTAssertEqual(stereo.count, 16)
+        let vals = pcmToArray(stereo)
+        XCTAssertEqual(vals, [5, 50, 6, 60, 0, 70, 0, 80], "Left channel zero-padded")
+    }
+
+    func testInterleaveEmptyLeftProducesAllZeroLeft() {
+        let left  = Data()
+        let right = pcmFrom([1, 2, 3])
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        XCTAssertEqual(stereo.count, 12)
+        let vals = pcmToArray(stereo)
+        XCTAssertEqual(vals, [0, 1, 0, 2, 0, 3])
+    }
+
+    func testInterleaveEmptyRightProducesAllZeroRight() {
+        let left  = pcmFrom([7, 8])
+        let right = Data()
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        XCTAssertEqual(stereo.count, 8)
+        let vals = pcmToArray(stereo)
+        XCTAssertEqual(vals, [7, 0, 8, 0])
+    }
+
+    func testInterleaveBothEmptyProducesEmptyData() {
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: Data(), rightPCM: Data())
+        XCTAssertEqual(stereo.count, 0)
+    }
+
+    func testInterleaveOutputSizeIsDoubleFrameCount() {
+        // For any inputs, output byte count must be 4 * max(leftFrames, rightFrames)
+        let left  = pcmFrom([Int16](repeating: 0, count: 100))
+        let right = pcmFrom([Int16](repeating: 0, count: 80))
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        XCTAssertEqual(stereo.count, 100 * 4)
+    }
+
+    func testInterleavePreservesNegativeValues() {
+        let left  = pcmFrom([-1000, -2000])
+        let right = pcmFrom([1000, 2000])
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        let vals = pcmToArray(stereo)
+        XCTAssertEqual(vals, [-1000, 1000, -2000, 2000])
+    }
+
+    func testInterleavePreservesMaxAmplitudeValues() {
+        let left  = pcmFrom([Int16.min, Int16.max])
+        let right = pcmFrom([Int16.max, Int16.min])
+        let stereo = SampleExporter.interleaveToStereo(leftPCM: left, rightPCM: right)
+        let vals = pcmToArray(stereo)
+        XCTAssertEqual(vals, [Int16.min, Int16.max, Int16.max, Int16.min])
+    }
+
+    // MARK: - exportAllSamples filename template
+
+    /// Build a minimal BankSampleData with one silent sample.
+    private func makeBankSampleData(
+        name: String = "KICK",
+        sampleRate: Int = 22050,
+        rootKey: Int = 60,
+        loopStart: Int? = nil,
+        loopEnd: Int? = nil
+    ) -> BankSampleData {
+        let pcm = Data(count: 200) // silence
+        let entry = BankSampleData.SampleEntry(
+            index: 0, name: name,
+            pcmData: pcm, sampleRate: sampleRate,
+            loopStart: loopStart, loopEnd: loopEnd,
+            rootKey: rootKey
+        )
+        return BankSampleData(samples: [entry], rawPCM: pcm, sampleDataOffset: 0)
+    }
+
+    func testExportAllSamplesDefaultTemplateUsesSampleName() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "VIOLIN")
+        _ = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "STRINGS", to: dir,
+            format: .wav, normalize: false, createSubfolder: false,
+            filenameTemplate: .default
+        )
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        XCTAssertTrue(files.contains("VIOLIN.wav"),
+                      "Default template should produce 'VIOLIN.wav', got: \(files)")
+    }
+
+    func testExportAllSamplesEmxpStyleTemplate() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "CELLO")
+        _ = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "STRINGS", to: dir,
+            format: .wav, normalize: false, createSubfolder: false,
+            filenameTemplate: .emxpStyle   // {bank}_{index}_{sample}
+        )
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        XCTAssertTrue(files.contains("STRINGS_001_CELLO.wav"),
+                      "emxpStyle template should produce 'STRINGS_001_CELLO.wav', got: \(files)")
+    }
+
+    func testExportAllSamplesCustomTemplate() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "BASS")
+        _ = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "LOW", to: dir,
+            format: .wav, normalize: false, createSubfolder: false,
+            filenameTemplate: SampleFilenameTemplate("EXPORT_{bank}_{sample}")
+        )
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        XCTAssertTrue(files.contains("EXPORT_LOW_BASS.wav"),
+                      "Custom template should produce 'EXPORT_LOW_BASS.wav', got: \(files)")
+    }
+
+    func testExportAllSamplesBankIndexPassedToTemplate() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "X")
+        _ = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "B", to: dir,
+            format: .wav, normalize: false, createSubfolder: false,
+            filenameTemplate: SampleFilenameTemplate("{bankindex}_{sample}"),
+            bankIndex: 7
+        )
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        XCTAssertTrue(files.contains("7_X.wav"),
+                      "bankindex=7 should produce '7_X.wav', got: \(files)")
+    }
+
+    func testExportAllSamplesKeyTemplateWithRootKey() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "NOTE", rootKey: 60)  // C4
+        _ = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "PIANO", to: dir,
+            format: .wav, normalize: false, createSubfolder: false,
+            filenameTemplate: .bankKeyAndSample   // {bank}_{key}_{sample}
+        )
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        XCTAssertTrue(files.contains("PIANO_C4_NOTE.wav"),
+                      "bankKeyAndSample template with rootKey=60 should produce 'PIANO_C4_NOTE.wav', got: \(files)")
+    }
+
+    // MARK: - WAV smpl chunk (loop preservation)
+
+    /// Parse a WAV file and return the data of a chunk with the given 4-byte ID, or nil.
+    /// The returned Data is always freshly allocated with 0-based indices.
+    private func findWAVChunk(id: String, in wavData: Data) -> Data? {
+        guard wavData.count >= 12 else { return nil }
+        guard wavData[0..<4] == "RIFF".data(using: .ascii)! else { return nil }
+        guard wavData[8..<12] == "WAVE".data(using: .ascii)! else { return nil }
+        let idBytes = id.data(using: .ascii)!
+        var offset = 12
+        while offset + 8 <= wavData.count {
+            let chunkID = wavData[offset..<offset + 4]
+            let chunkSize = Int(wavData[offset+4]) |
+                           (Int(wavData[offset+5]) << 8) |
+                           (Int(wavData[offset+6]) << 16) |
+                           (Int(wavData[offset+7]) << 24)
+            if chunkID == idBytes {
+                let dataStart = offset + 8
+                let dataEnd = min(dataStart + chunkSize, wavData.count)
+                // Return a new Data so indices start at 0, not at the file offset
+                return Data(wavData[dataStart..<dataEnd])
+            }
+            offset += 8 + chunkSize
+            if chunkSize % 2 != 0 { offset += 1 } // WAV pad byte
+        }
+        return nil
+    }
+
+    func testExportSampleWithLoopWritesSmplChunk() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "LOOP", loopStart: 10, loopEnd: 80)
+        let results = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "B", to: dir,
+            format: .wav, normalize: false, createSubfolder: false
+        )
+        let wavURL = try XCTUnwrap(results.first?.outputURL)
+        let wavData = try Data(contentsOf: wavURL)
+        let smplChunk = findWAVChunk(id: "smpl", in: wavData)
+        XCTAssertNotNil(smplChunk, "WAV file with loop should contain smpl chunk")
+    }
+
+    func testExportSampleWithoutLoopHasNoSmplChunk() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "NOLOOP", loopStart: nil, loopEnd: nil)
+        let results = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "B", to: dir,
+            format: .wav, normalize: false, createSubfolder: false
+        )
+        let wavURL = try XCTUnwrap(results.first?.outputURL)
+        let wavData = try Data(contentsOf: wavURL)
+        let smplChunk = findWAVChunk(id: "smpl", in: wavData)
+        XCTAssertNil(smplChunk, "WAV without loop data should not contain smpl chunk")
+    }
+
+    func testSmplChunkContainsCorrectLoopPoints() throws {
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let loopStart = 20
+        let loopEnd   = 90
+        let bank = makeBankSampleData(name: "L", rootKey: 69, loopStart: loopStart, loopEnd: loopEnd)
+        let results = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "B", to: dir,
+            format: .wav, normalize: false, createSubfolder: false
+        )
+        let wavURL = try XCTUnwrap(results.first?.outputURL)
+        let wavData = try Data(contentsOf: wavURL)
+        let smplBody = try XCTUnwrap(findWAVChunk(id: "smpl", in: wavData),
+                                     "smpl chunk must be present")
+        // MIDI unity note at byte 12 of smpl body
+        let midiNote = Int(smplBody[12]) | (Int(smplBody[13]) << 8) |
+                       (Int(smplBody[14]) << 16) | (Int(smplBody[15]) << 24)
+        XCTAssertEqual(midiNote, 69, "smpl MIDI unity note should be rootKey=69")
+        // num sample loops at byte 28
+        let numLoops = Int(smplBody[28]) | (Int(smplBody[29]) << 8)
+        XCTAssertEqual(numLoops, 1, "smpl chunk should encode exactly one loop")
+        // Loop start at body offset 44 (36 header + 8 into loop struct)
+        let ls = Int(smplBody[44]) | (Int(smplBody[45]) << 8) |
+                 (Int(smplBody[46]) << 16) | (Int(smplBody[47]) << 24)
+        let le = Int(smplBody[48]) | (Int(smplBody[49]) << 8) |
+                 (Int(smplBody[50]) << 16) | (Int(smplBody[51]) << 24)
+        XCTAssertEqual(ls, loopStart, "smpl loop start should match sample loopStart")
+        XCTAssertEqual(le, loopEnd,   "smpl loop end should match sample loopEnd")
+    }
+
+    func testSmplChunkUpdatesRIFFSize() throws {
+        // Verify that the RIFF container size field is updated when smpl chunk is appended
+        let dir = makeTempDir()
+        defer { cleanup(dir) }
+        let bank = makeBankSampleData(name: "R", loopStart: 5, loopEnd: 95)
+        let results = try SampleExporter.exportAllSamples(
+            from: bank, bankName: "B", to: dir,
+            format: .wav, normalize: false, createSubfolder: false
+        )
+        let wavURL = try XCTUnwrap(results.first?.outputURL)
+        let wavData = try Data(contentsOf: wavURL)
+        // RIFF size at bytes 4-7 must equal total file size - 8
+        let riffSize = Int(wavData[4]) | (Int(wavData[5]) << 8) |
+                       (Int(wavData[6]) << 16) | (Int(wavData[7]) << 24)
+        XCTAssertEqual(riffSize, wavData.count - 8, "RIFF size field must match actual file size - 8")
+    }
 }
