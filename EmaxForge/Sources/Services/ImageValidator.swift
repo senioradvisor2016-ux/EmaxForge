@@ -76,22 +76,38 @@ class ImageValidator {
             message: sizeValid ? "\(sizeMB) MB ✓" : "\(sizeMB) MB (unexpected size)"
         ))
         
-        // Check 2: Boot signature (0x7882 at offset 0x1FE-0x1FF)
+        // Check 2: Boot signature — size-specific byte pair at offset 0x1FE-0x1FF.
+        // Each EMAX II disk size has a distinct opaque signature from the format tool.
+        // Compare bytes directly (do NOT interpret as a UInt16 — endian confusion caused 0x7882 bug).
+        let bootSigBySize: [Int: (UInt8, UInt8)] = [
+            96:  (0xA1, 0x93),
+            239: (0x78, 0x82),
+            481: (0x65, 0x9F),
+            633: (0x79, 0x24),
+            962: (0xD7, 0xAD),
+        ]
         handle.seek(toFileOffset: 0x1FE)
         guard let bootSigData = try handle.read(upToCount: 2), bootSigData.count == 2 else {
             checks.append(.init(name: "Boot signature", passed: false, message: "Could not read"))
             return ValidationResult(isValid: false, checks: checks, errors: nil, errorCount: 0)
         }
-        
-        let bootSig = UInt16(bootSigData[0]) | (UInt16(bootSigData[1]) << 8)
-        let bootSigValid = bootSig == 0x7882
+
+        let bootSigValid: Bool
+        if let (b0, b1) = bootSigBySize[sizeMB] {
+            bootSigValid = bootSigData[0] == b0 && bootSigData[1] == b1
+        } else {
+            // Unknown size — accept any non-empty, non-PC-MBR signature
+            bootSigValid = !(bootSigData[0] == 0x55 && bootSigData[1] == 0xAA)
+                        && !(bootSigData[0] == 0 && bootSigData[1] == 0)
+        }
+        let sigHex = String(format: "0x%02X 0x%02X", bootSigData[0], bootSigData[1])
         checks.append(.init(
             name: "Boot signature",
             passed: bootSigValid,
-            message: bootSigValid ? "0x7882 ✓" : String(format: "0x%04X ✗ (expected 0x7882)", bootSig)
+            message: bootSigValid ? "\(sigHex) ✓" : "\(sigHex) ✗ (unexpected for \(sizeMB) MB disk)"
         ))
         
-        // Check 3: FAT header (entry 0 should be 0x000F or 0x8000)
+        // Check 3: FAT header (entry 0 == 0x8000, reserved marker, verified against all EMXP templates)
         handle.seek(toFileOffset: 0x400)
         guard let fatData = try handle.read(upToCount: 2), fatData.count == 2 else {
             checks.append(.init(name: "FAT header", passed: false, message: "Could not read"))

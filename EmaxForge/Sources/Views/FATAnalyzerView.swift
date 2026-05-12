@@ -56,7 +56,7 @@ private enum FATAnalyzer {
 
         let entry0 = fat.count > 0 ? fat[0] : 0
         let entry1 = fat.count > 1 ? fat[1] : 0
-        let entry0Valid = (entry0 == 0x8000 || entry0 == 0x000F)
+        let entry0Valid = (entry0 == 0x8000)  // reserved marker — verified against all EMXP templates and HD0.hda
 
         var freeClusters = 0
         var usedClusters = 0

@@ -125,6 +125,7 @@ enum DiskInspectorService {
         guard magic == "EMX2" else { throw InspectionError.invalidMagic(found: magic) }
 
         // Parse header fields
+        let headerClusterSize = Int(headerData.readU32LE(at: 0x04))  // cluster size in bytes (verified vs EMXP templates)
         let bntStartSector  = Int(headerData.readU32LE(at: 0x10))
         let maxBanks        = Int(headerData.readU32LE(at: 0x14))
         let fatSectors      = Int(headerData.readU32LE(at: 0x1C))
@@ -135,10 +136,17 @@ enum DiskInspectorService {
         let bootSig0 = headerData[0x1FE]
         let bootSig1 = headerData[0x1FF]
 
-        // Cluster size: computed from actual file size (header[0x04] is disk size in sectors, not cluster size)
+        // Cluster size: prefer header[0x04] (the cluster-size field in all EMX2 disk headers,
+        // verified against EMXP templates). This matches BankExtractor, BankExporter, and OSManager.
+        // Fall back to geometry only if header field is zero (corrupt/undefined).
         let diskSizeSectors     = fileSize / 512
-        let sectorsPerCluster   = totalClusters > 0 ? max((diskSizeSectors - caStartSector) / totalClusters, 1) : 128
-        let clusterSize         = sectorsPerCluster * 512
+        let clusterSize: Int
+        if headerClusterSize > 0 {
+            clusterSize = headerClusterSize
+        } else {
+            let sectorsPerCluster = totalClusters > 0 ? max((diskSizeSectors - caStartSector) / totalClusters, 1) : 128
+            clusterSize = sectorsPerCluster * 512
+        }
 
         let fatOffset: UInt64   = 0x400
         let fatSize             = max(fatSectors * 512, 4)

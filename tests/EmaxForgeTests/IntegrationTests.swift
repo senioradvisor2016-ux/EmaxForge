@@ -51,8 +51,8 @@ final class IntegrationTests: XCTestCase {
             let fatEntry0High = data[1025]
             let fatEntry0 = UInt16(fatEntry0Low) | (UInt16(fatEntry0High) << 8)
             
-            // FAT entry 0: Both 0x000F and 0x8000 are valid (EMXP uses 0x8000, older tools use 0x000F)
-            XCTAssert(fatEntry0 == 0x000F || fatEntry0 == 0x8000, "FAT entry 0 should be 0x000F or 0x8000, got 0x\(String(format: "%04X", fatEntry0))")
+            // FAT entry 0 == 0x8000 (reserved marker, verified against all EMXP templates and HD0.hda)
+            XCTAssertEqual(fatEntry0, 0x8000, "FAT entry 0 must be 0x8000, got 0x\(String(format: "%04X", fatEntry0))")
             print("  ✓ FAT entry 0: 0x\(String(format: "%04X", fatEntry0))")
             
             let fatEntry1Low = data[1026]
