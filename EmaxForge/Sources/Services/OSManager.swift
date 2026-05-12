@@ -2,11 +2,12 @@ import Foundation
 
 /// Manage EMAX-II operating system (.EMX files)
 ///
-/// Disk layout (verified Mar 18 2026):
+/// Disk layout (verified May 2026):
 ///   BNT: at sector header[0x10]*512 (32-byte entries)
 ///   FAT: ALWAYS at 0x400
-///   Clusters: 1-based — cluster 1 = CA offset + 0
-///   OS entry: BNT slot 0, idx=0x7800, start cluster=1
+///   Clusters: 0-based — cluster n = CA offset + n * clusterSize
+///   OS entry: BNT slot 0, startCluster=0x7800 (special marker), OS data at cluster 1
+///   BNT layout: +0x10=startCluster, +0x12=clusterCount, +0x14=numPresets, +0x1A=flags
 class OSManager {
     
     enum OSError: Error, LocalizedError {
@@ -47,9 +48,9 @@ class OSManager {
         var bntOffset: Int { bntStartSector * 512 }
         var clusterAreaOffset: Int { clusterAreaStartSector * 512 }
         
-        /// 1-based: cluster n → clusterAreaOffset + (n-1)*clusterSize
+        /// 0-based: cluster n → clusterAreaOffset + n*clusterSize (verified vs EmaxIIFileSystem.swift)
         func clusterOffset(_ cluster: Int) -> Int {
-            clusterAreaOffset + (cluster - 1) * clusterSize
+            clusterAreaOffset + cluster * clusterSize
         }
     }
     
@@ -57,14 +58,22 @@ class OSManager {
         guard data.count >= 0x28 else { throw OSError.invalidDiskStructure }
         let magic = String(data: data[0..<4], encoding: .ascii) ?? ""
         guard magic == "EMX2" else { throw OSError.invalidDiskStructure }
-        
-        // clusterSize computed from disk geometry (not stored at 0x04)
-        let diskSizeSectors = Int(fileSize / 512)
+
+        // Prefer header[0x04] for clusterSize if it is a valid multiple of 512 and ≤ 4 MB.
+        // Real EMAX II hardware disks store clusterSize directly at 0x04.
+        // Fall back to geometry computation for EMXP-created disks.
         let caStartSector = Int(data.readU32LE(at: 0x20))
         let totalClusters = Int(data.readU32LE(at: 0x24))
-        let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
-        let clusterSize = sectorsPerCluster * 512
-        
+        let headerCS = Int(data.readU32LE(at: 0x04))
+        let clusterSize: Int
+        if headerCS > 0 && headerCS % 512 == 0 && headerCS <= 4_194_304 {
+            clusterSize = headerCS
+        } else {
+            let diskSizeSectors = Int(fileSize / 512)
+            let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
+            clusterSize = sectorsPerCluster * 512
+        }
+
         return DiskGeo(
             clusterSize:            clusterSize,
             bntStartSector:         Int(data.readU32LE(at: 0x10)),
@@ -89,22 +98,25 @@ class OSManager {
         for i in 0..<maxSlots {
             let offset = geo.bntOffset + (i * 32)
             guard offset + 32 <= diskData.count else { break }
-            let entry = diskData[offset..<(offset + 32)]
-            
-            let name = String(data: entry[offset..<(offset + 14)], encoding: .ascii)?
+            // Use subdata to get a zero-indexed copy (Data slice indices are absolute).
+            let entry = diskData.subdata(in: offset..<(offset + 32))
+
+            let name = String(data: entry[0..<14], encoding: .ascii)?
                 .trimmingCharacters(in: .controlCharacters)
                 .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
-            
+
             if name.contains("EMAX2") || name.contains("Software") {
-                osCluster = Int(entry.readU16LE(at: offset + 18))
-                osClusters = Int(entry.readU16LE(at: offset + 20))
+                // OS BNT entry: startCluster = 0x7800 (special marker — not a real cluster).
+                // OS data is always at cluster 1 (0-based). Read clusterCount from +0x12.
+                osCluster = 1
+                osClusters = Int(entry.readU16LE(at: 18))  // +0x12 = clusterCount
                 if osClusters == 0 { osClusters = 1 }
                 print("✅ Found OS catalog entry: '\(name)'")
-                print("   Cluster: \(osCluster!), Size: \(osClusters) clusters")
+                print("   OS at cluster \(osCluster!), clusterCount: \(osClusters)")
                 break
             }
         }
-        
+
         // OS is always cluster 1 on working disks
         if osCluster == nil {
             print("⚠️  OS not in catalog, assuming cluster 1")
@@ -159,7 +171,8 @@ class OSManager {
         print("📦 Installing OS from \(emxURL.lastPathComponent)")
         print("   Size: \(osData.count) bytes (\(Double(osData.count) / 1024.0) KB)")
         
-        // OS goes to cluster 1 (1-based: offset = clusterAreaOffset + 0)
+        // OS goes to cluster 1 (0-based: offset = clusterAreaOffset + 1 * clusterSize).
+        // Verified: FAT[1]=0x7FFF on all EMAX II hardware disks.
         let osOffset = geo.clusterOffset(1)
         
         // Pad to full cluster
