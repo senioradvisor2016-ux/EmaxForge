@@ -290,12 +290,15 @@ struct BatchBankImportSheet: View {
                     importProgress = Double(idx) / Double(selectedFiles.count)
                 }
 
+                // Capture @State value before entering the detached task — accessing
+                // main-actor-isolated properties from Task.detached is an error in Swift 6.
+                let allowDuplicate = !skipDuplicates
                 do {
                     try await Task.detached(priority: .userInitiated) {
                         try BankImporter.importBank(
                             eb2URL: url,
                             into: target.url,
-                            allowDuplicate: !skipDuplicates
+                            allowDuplicate: allowDuplicate
                         )
                     }.value
                     await MainActor.run {
