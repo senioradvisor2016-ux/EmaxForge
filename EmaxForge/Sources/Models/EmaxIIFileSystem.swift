@@ -172,6 +172,7 @@ struct SampleParameter: Identifiable {
     let loopEnd: Int
     let hasLoop: Bool
     let originalKey: Int        // MIDI note
+    let loopFlags: UInt8        // param +0x1C: bit0=sustainEnabled, bit1=releaseEnabled, bit2=backward
     
     var sizeInBytes: Int { max(0, endAddress - startAddress) }
     var sizeInFrames: Int { sizeInBytes / 2 }  // 16-bit = 2 bytes per frame
@@ -570,13 +571,19 @@ enum EmaxIIParser {
             let storedKey = Int(data[base + EmaxIIFormat.paramOriginalKey])
             let originalKey = (storedKey > 0 && storedKey <= 127) ? storedKey : 60
 
+            // Read loop flags from param +0x1C: bit0=sustainEnabled, bit1=releaseEnabled, bit2=backward
+            let loopFlags = data[base + EmaxIIFormat.paramLoopFlags]
+            // hasLoop: sustain bit must be set AND addresses must be valid
+            let hasLoop = (loopFlags & 0x01) != 0 && loopEnd > loopStart && loopEnd > 0
+
             params.append(SampleParameter(
                 index: i, name: name.isEmpty ? "Sample \(i + 1)" : name,
                 startAddress: startAddr, endAddress: endAddr,
                 sampleRate: sampleRate,
                 loopStart: loopStart, loopEnd: loopEnd,
-                hasLoop: loopEnd > loopStart && loopEnd > 0,
-                originalKey: originalKey
+                hasLoop: hasLoop,
+                originalKey: originalKey,
+                loopFlags: loopFlags
             ))
         }
         
