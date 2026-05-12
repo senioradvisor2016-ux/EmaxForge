@@ -397,8 +397,21 @@ class EB2ParamTableBuilder {
         let diskSizeSectors   = Int(fileSize64 / 512)
         let caStartSector     = Int(header.readU32LE(at: 0x20))
         let totalClusters     = Int(header.readU32LE(at: 0x24))
-        let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
-        let clusterSize       = sectorsPerCluster * 512
+
+        // Cluster size from header[0x04] — MUST NOT ignore this in favour of geometric fallback.
+        // EMAX II format stores opaque values: 96 MB → 196352 (% 512 = 256, NOT sector-aligned),
+        // 962 MB → 1969408 (% 512 = 256). The geometric fallback always gives a sector-multiple
+        // which is wrong for those two sizes. Use header[0x04] when valid; fall back only when absent.
+        let headerCS    = Int(header.readU32LE(at: 0x04))
+        let clusterSize: Int
+        if headerCS > 0 && headerCS <= 4_194_304 {
+            clusterSize = headerCS
+        } else {
+            let sectorsPerCluster = totalClusters > 0
+                ? max((diskSizeSectors - caStartSector) / totalClusters, 1)
+                : 128
+            clusterSize = sectorsPerCluster * 512
+        }
         let caOffset          = UInt64(caStartSector) * 512
 
         // Läs bankdata via kluster-kedja

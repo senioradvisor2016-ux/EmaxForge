@@ -79,11 +79,14 @@ class DiskFormatter {
             clusterAreaStartSector: 115, totalClusters: 961,
             bootSig: (0x65, 0x9F)
         ),
-        // 633 MB — interpolated (EMXP supports it, template TBD)
+        // 633 MB — verified from emax2_header_633.bin binary template (May 2026)
+        // Previous values were interpolated (wrong). All fields now match the binary:
+        //   clusterSize=1296384 (0x13C800), field08=7, fatStartSector=4, bntStartSector=11,
+        //   maxBanks=140, field18=2, fatSectors=5, caStartSector=151, totalClusters=1265.
         633: DiskTemplate(
-            clusterSize: 489472, field08: 6, fatStartSector: 2,
-            bntStartSector: 8, maxBanks: 90, field18: 2, fatSectors: 4,
-            clusterAreaStartSector: 98, totalClusters: 955,
+            clusterSize: 1296384, field08: 7, fatStartSector: 4,
+            bntStartSector: 11, maxBanks: 140, field18: 2, fatSectors: 5,
+            clusterAreaStartSector: 151, totalClusters: 1265,
             bootSig: (0x79, 0x24)
         ),
         // 962 MB (1007765504 bytes)

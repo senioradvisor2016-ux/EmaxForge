@@ -87,16 +87,19 @@ class ImageCreator {
             bootSig2: 0x93
         ),
         239: ImageTemplate(
-            clusterSize: 4096,           // 8 sectors × 512 bytes
-            field_0x08: 6,               // 0x0008: 06 00 00 00
-            field_0x0C: 2,               // 0x000C: 02 00 00 00 (sectorSize multiplier)
-            field_0x10: 8,               // 0x0010: 08 00 00 00 (clusterSizeSectors)
-            bankCount: 90,               // 0x0014: 5A 00 00 00 (90 banks)
-            field_0x18: 2,               // 0x0018: 02 00 00 00
-            field_0x1C: 4,               // 0x001C: 04 00 00 00
-            clusterAreaStartSector: 1920, // 0x0004: 00 78 07 00 = 0x0778 = 1920 ✅ FIXED!
-            sectorsPerClusterMinus1: 955, // 0x0024: BB 03 00 00 = totalClusters
-            field_0x28: 0x783B0103,      // 0x0028: 03 01 3B 78
+            // Verified from emax2_header_239.bin binary template (May 2026).
+            // clusterSize=489472 (0x77800), bntSector=8, fatSectors=4, caStartSector=98.
+            // Old values (clusterSize:4096, caStartSector:1920) were wrong — mixed up field bytes.
+            clusterSize: 489472,         // header[0x04] = 0x00077800 = 489472 bytes/cluster
+            field_0x08: 6,
+            field_0x0C: 2,
+            field_0x10: 8,               // BNT start sector
+            bankCount: 90,
+            field_0x18: 2,
+            field_0x1C: 4,               // FAT sectors
+            clusterAreaStartSector: 98,  // header[0x20] = 0x62 = 98 (NOT 1920)
+            sectorsPerClusterMinus1: 955,
+            field_0x28: 0x783B0103,
             field_0x2C: 7,
             field_0x30: 0x0D020000,
             bootSig1: 0x78,
@@ -210,8 +213,11 @@ class ImageCreator {
         let templatePath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("clawd/EmaxForge/EmaxForge/Resources/bootable_templates/\(templateFilename)")
         
-        guard FileManager.default.fileExists(atPath: templatePath.path) else {
-            print("⚠️  Template not found: \(templatePath.path)")
+        // Guard: file must exist AND be non-empty.
+        // Zero-byte placeholder files (96/633/962 MB) exist on disk but are not usable templates.
+        let templateSize = (try? FileManager.default.attributesOfItem(atPath: templatePath.path)[.size] as? Int) ?? 0
+        guard FileManager.default.fileExists(atPath: templatePath.path) && templateSize > 0 else {
+            print("⚠️  Template not found or empty (\(templateSize) bytes): \(templatePath.path)")
             print("   Falling back to old buildFromScratch method...")
             return try createBootableImageLegacy(at: destinationURL, sizeMB: sizeMB, osFileURL: osFileURL)
         }
