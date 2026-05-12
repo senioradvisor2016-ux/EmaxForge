@@ -324,7 +324,12 @@ class SoundFontConverter {
             pos += 8
             
             if chunkID == "smpl" {
-                return data[pos..<(pos + Int(chunkSize))]
+                // Materialise as a fresh Data so startIndex == 0.
+                // Returning a raw slice keeps the original absolute indices,
+                // and buildSamples would crash when it subscripts with 0-based
+                // byte offsets (e.g. sampleData[0..<8] on a slice starting at
+                // position 152 in the RIFF file → Swift bounds trap / Signal 5).
+                return Data(data[pos..<(pos + Int(chunkSize))])
             }
             
             pos += Int(chunkSize)
