@@ -129,6 +129,52 @@ final class EmaxIIFormatTests: XCTestCase {
         XCTAssertEqual(EmaxIIFormat.numSamplesOffset, 0x1E)
     }
 
+    // Bank header field offsets
+    func testBankNameOffset() {
+        XCTAssertEqual(EmaxIIFormat.bankNameOffset, 0x04)
+    }
+
+    func testNumPresetsOffset() {
+        XCTAssertEqual(EmaxIIFormat.numPresetsOffset, 0x1C)
+    }
+
+    func testTotalSampleSizeOffset() {
+        XCTAssertEqual(EmaxIIFormat.totalSampleSizeOffset, 0x20)
+    }
+
+    // Per-sample param field offsets (within each 64-byte block)
+    func testParamOriginalKey() {
+        XCTAssertEqual(EmaxIIFormat.paramOriginalKey, 10)  // +0x0A
+    }
+
+    func testParamFlags() {
+        XCTAssertEqual(EmaxIIFormat.paramFlags, 11)        // +0x0B
+    }
+
+    func testParamSustainLoopStart() {
+        XCTAssertEqual(EmaxIIFormat.paramSustainLoopStart, 12)  // +0x0C
+    }
+
+    func testParamSustainLoopEnd() {
+        XCTAssertEqual(EmaxIIFormat.paramSustainLoopEnd, 16)    // +0x10
+    }
+
+    func testParamReleaseLoopStart() {
+        XCTAssertEqual(EmaxIIFormat.paramReleaseLoopStart, 20)  // +0x14
+    }
+
+    func testParamReleaseLoopEnd() {
+        XCTAssertEqual(EmaxIIFormat.paramReleaseLoopEnd, 24)    // +0x18
+    }
+
+    func testParamLoopFlags() {
+        XCTAssertEqual(EmaxIIFormat.paramLoopFlags, 28)    // +0x1C
+    }
+
+    func testParamOutputChannel() {
+        XCTAssertEqual(EmaxIIFormat.paramOutputChannel, 48) // +0x30
+    }
+
     // Legacy alias verification
     func testParamLoopStartIsAliasForSustainLoopStart() {
         XCTAssertEqual(EmaxIIFormat.paramLoopStart, EmaxIIFormat.paramSustainLoopStart)
@@ -136,6 +182,21 @@ final class EmaxIIFormatTests: XCTestCase {
 
     func testParamLoopEndIsAliasForSustainLoopEnd() {
         XCTAssertEqual(EmaxIIFormat.paramLoopEnd, EmaxIIFormat.paramSustainLoopEnd)
+    }
+
+    // Structural consistency checks
+    func testSampleParamAreaFitsMaxSamples() {
+        // maxSamples × sampleParamSize must fit between sampleParamOffset and sampleDataOffset
+        let endOfParamArea = EmaxIIFormat.sampleParamOffset + EmaxIIFormat.maxSamples * EmaxIIFormat.sampleParamSize
+        XCTAssertLessThanOrEqual(endOfParamArea, EmaxIIFormat.sampleDataOffset,
+                                  "Param table overflows into sample data area")
+    }
+
+    func testPresetAreaFitsMaxPresets() {
+        // maxPresets × presetSize must fit before sampleParamOffset
+        let endOfPresetArea = EmaxIIFormat.presetAreaOffset + EmaxIIFormat.maxPresets * EmaxIIFormat.presetSize
+        XCTAssertLessThanOrEqual(endOfPresetArea, EmaxIIFormat.sampleParamOffset,
+                                  "Preset area overflows into sample param area")
     }
 }
 
