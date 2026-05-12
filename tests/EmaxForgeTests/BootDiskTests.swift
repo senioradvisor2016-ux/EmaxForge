@@ -126,18 +126,19 @@ final class BootDiskTests: XCTestCase {
         // Cluster sizes from EMXP-verified DiskFormatter templates (DiskFormatter.swift).
         // Stored at header[0x04]; used to calculate: offset = caOffset + cluster × clusterSize.
         // 239 MB verified against HD0.hda (header[0x04] = 0x77800 = 489472, % 512 = 0).
+        // 633 MB verified against emax2_header_633.bin (header[0x04] = 0x13C800 = 1296384).
         // 96 MB and 962 MB values come from DiskFormatter templates; they are 256-byte
         // aligned but NOT 512-byte (sector) aligned (196352 % 512 = 256, 1969408 % 512 = 256).
-        //   96 MB → 196352  (≈192 KB per cluster)
-        //  239 MB → 489472  (= 239 × 2048 bytes, ≈478 KB per cluster) — verified HD0.hda
-        //  481 MB → 984576  (≈962 KB per cluster)
-        //  633 MB → 489472  (same cluster size as 239 MB)
-        //  962 MB → 1969408 (≈1924 KB per cluster)
+        //   96 MB →  196352  (≈192 KB per cluster)
+        //  239 MB →  489472  (= 239 × 2048 bytes, ≈478 KB per cluster) — verified HD0.hda
+        //  481 MB →  984576  (≈962 KB per cluster)
+        //  633 MB → 1296384  (= 0x13C800, ≈1266 KB per cluster) — verified emax2_header_633.bin
+        //  962 MB → 1969408  (≈1924 KB per cluster)
         let clusterSizes: [Int: Int] = [
             96:  196352,
             239: 489472,
             481: 984576,
-            633: 489472,
+            633: 1296384,
             962: 1969408,
         ]
 
@@ -157,7 +158,7 @@ final class BootDiskTests: XCTestCase {
         // Correct guard (matching all other services): cs > 0 && cs <= 4_194_304.
         //
         // Regression test: verify the correct guard accepts all five EMXP template sizes.
-        let emxpClusterSizes = [196352, 489472, 984576, 489472, 1969408]
+        let emxpClusterSizes = [196352, 489472, 984576, 1296384, 1969408]
         for cs in emxpClusterSizes {
             let acceptedByCorrectGuard = cs > 0 && cs <= 4_194_304
             XCTAssertTrue(acceptedByCorrectGuard,

@@ -27,7 +27,8 @@ struct EmaxIIFileSystem {
     var clusterAreaStartOffset: UInt64 { UInt64(clusterAreaStartSector) * 512 }
 }
 
-/// A single entry in the bank catalog (32 bytes at offset 0x1000)
+/// A single entry in the bank catalog (32 bytes at bntStartSector × 512;
+/// sector varies by disk size: 96MB→9, 239MB→8, 481MB→9, 633MB→11, 962MB→12)
 struct BankCatalogEntry: Identifiable, Hashable {
     let id = UUID()
     let catalogIndex: Int
