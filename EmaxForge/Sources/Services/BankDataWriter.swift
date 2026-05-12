@@ -6,9 +6,9 @@ import Foundation
 ///   Header:  sector 0 (0x000), 512 bytes
 ///   FAT:     ALWAYS at 0x400 (sector 2), size = header[0x1C] sectors
 ///   BNT:     sector header[0x10]*512, 32-byte entries, max header[0x14] banks
-///   Clusters: sector header[0x20]*512, clusterSize computed from diskSectors and totalClusters
+///   Clusters: sector header[0x20]*512, clusterSize read from header[0x04] (fallback: computed)
 ///
-/// Cluster offset formula: ca_off + (cluster - 1) * clusterSize  (1-based)
+/// Cluster offset formula: ca_off + cluster * clusterSize  (0-based, verified vs EmaxIIFileSystem.swift)
 ///
 /// Bank data buffer layout (EMX full format):
 ///   0x000–0x1FF  Bank header (512 bytes)
@@ -75,13 +75,13 @@ enum BankDataWriter {
         /// Byte offset of the cluster data area
         var clusterAreaOffset: UInt64 { UInt64(clusterAreaStartSector) * 512 }
 
-        /// Byte offset for a given cluster number (1-based).
+        /// Byte offset for a given cluster number (0-based).
         ///
-        /// Verified against EMXP emxp_base.hda (Mar 22 2026):
-        ///   cluster 1 → clusterAreaOffset (OS data)
-        ///   cluster 2 → clusterAreaOffset + 1×clusterSize
+        /// Verified against HD0.hda (original EMAX II hardware):
+        ///   cluster 0 → clusterAreaOffset (STEEL DRUMS / first bank)
+        ///   cluster 1 → clusterAreaOffset + 1×clusterSize
         func clusterOffset(_ cluster: Int) -> UInt64 {
-            clusterAreaOffset + UInt64(cluster - 1) * UInt64(clusterSize)
+            clusterAreaOffset + UInt64(cluster) * UInt64(clusterSize)
         }
     }
 
@@ -89,9 +89,9 @@ enum BankDataWriter {
 
     /// Parse and return the disk geometry from the header of an EMAX II image.
     ///
-    /// Note on clusterSize: the value at header[0x04] is the disk size in sectors on some
-    /// images, NOT the cluster size. The correct cluster size is computed from
-    /// (diskSizeSectors - caStartSector) / totalClusters * 512, matching BankImporter.
+    /// Note on clusterSize: header[0x04] holds clusterSize on original EMAX II hardware disks
+    /// (e.g. HD0.hda). If that value is a valid multiple of 512, it is used directly.
+    /// Otherwise cluster size is computed from geometry (for EMXP-created disks).
     ///
     /// - Parameter imageURL: URL of the .hda / .EZ2 disk image
     /// - Returns: Parsed DiskGeometry
@@ -118,17 +118,22 @@ enum BankDataWriter {
             throw BankDataError.notEmaxImage
         }
 
-        // Cluster size is computed, not stored directly.
-        // Formula: (diskSizeSectors - caStartSector) / totalClusters * 512
-        // Verified: matches BankImporter.parseGeometry (May 2026)
-        let diskSizeSectors = Int(fileSize / 512)
-        let caStartSector   = Int(header.readU32LE(at: 0x20))  // header +0x20: cluster area sector
-        let totalClusters   = Int(header.readU32LE(at: 0x24))  // header +0x24: total clusters
+        let caStartSector = Int(header.readU32LE(at: 0x20))  // header +0x20: cluster area sector
+        let totalClusters = Int(header.readU32LE(at: 0x24))  // header +0x24: total clusters
 
-        let sectorsPerCluster = totalClusters > 0
-            ? (diskSizeSectors - caStartSector) / totalClusters
-            : 128
-        let clusterSize = sectorsPerCluster * 512
+        // Prefer clusterSize from header[0x04] (original EMAX II hardware format: HD0.hda).
+        // Fall back to geometry-based computation for EMXP-created disks.
+        let headerClusterSize = Int(header.readU32LE(at: 0x04))
+        let clusterSize: Int
+        if headerClusterSize > 0 && headerClusterSize % 512 == 0 && headerClusterSize <= 4_194_304 {
+            clusterSize = headerClusterSize
+        } else {
+            let diskSizeSectors   = Int(fileSize / 512)
+            let sectorsPerCluster = totalClusters > 0
+                ? (diskSizeSectors - caStartSector) / totalClusters
+                : 128
+            clusterSize = sectorsPerCluster * 512
+        }
 
         return DiskGeometry(
             clusterSize:            clusterSize,
@@ -170,7 +175,7 @@ enum BankDataWriter {
         bankData.reserveCapacity(entry.clusterChain.count * geometry.clusterSize)
 
         for cluster in entry.clusterChain {
-            // 1-based cluster offset: ca_off + (cluster - 1) * clusterSize
+            // 0-based cluster offset: ca_off + cluster * clusterSize (via geo.clusterOffset)
             let offset = geometry.clusterOffset(cluster)
             handle.seek(toFileOffset: offset)
             let chunk = handle.readData(ofLength: geometry.clusterSize)
@@ -221,7 +226,7 @@ enum BankDataWriter {
         var dataOffset = 0
 
         for cluster in entry.clusterChain {
-            // 1-based cluster offset: ca_off + (cluster - 1) * clusterSize
+            // 0-based cluster offset: ca_off + cluster * clusterSize (via geo.clusterOffset)
             let physicalOffset = geometry.clusterOffset(cluster)
             handle.seek(toFileOffset: physicalOffset)
 

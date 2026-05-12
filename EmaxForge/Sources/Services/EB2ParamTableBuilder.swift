@@ -405,7 +405,7 @@ class EB2ParamTableBuilder {
         var bankData = Data()
         bankData.reserveCapacity(bankEntry.clusterChain.count * clusterSize)
         for cluster in bankEntry.clusterChain {
-            let physOffset = caOffset + UInt64(cluster - 1) * UInt64(clusterSize)
+            let physOffset = caOffset + UInt64(cluster) * UInt64(clusterSize)  // 0-based
             handle.seek(toFileOffset: physOffset)
             bankData.append(handle.readData(ofLength: clusterSize))
         }
@@ -424,7 +424,7 @@ class EB2ParamTableBuilder {
 
         var offset = 0
         for cluster in bankEntry.clusterChain {
-            let physOffset = caOffset + UInt64(cluster - 1) * UInt64(clusterSize)
+            let physOffset = caOffset + UInt64(cluster) * UInt64(clusterSize)  // 0-based
             writeHandle.seek(toFileOffset: physOffset)
             let end = min(offset + clusterSize, convertedData.count)
             if offset < end {

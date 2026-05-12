@@ -82,7 +82,7 @@ struct PresetAnalyzer {
         var bankData = Data()
         
         for cluster in bank.clusterChain {
-            let offset = clusterAreaOffset + (cluster - 1) * clusterSize
+            let offset = clusterAreaOffset + cluster * clusterSize  // 0-based
             guard offset + clusterSize <= imageData.count else {
                 throw AnalysisError.corruptedData
             }
