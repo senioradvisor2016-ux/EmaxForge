@@ -201,7 +201,7 @@ class SampleConverter {
         
         // --- Zone pointers (4 bytes per zone) ---
         for i in 0..<numZones {
-            var ptr = Data([0x00, 0x00, UInt8(i), 0xFF])
+            let ptr = Data([0x00, 0x00, UInt8(i), 0xFF])
             bank.append(ptr)
         }
         // End marker

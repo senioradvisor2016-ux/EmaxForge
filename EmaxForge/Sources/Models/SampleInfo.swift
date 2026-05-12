@@ -106,7 +106,8 @@ struct SampleAnalyzer {
         }
         
         // Parse bank to get preset info (for "used by" tracking)
-        let bankInfo = EmaxIIParser.parseBankData(bankData)
+        // TODO: Use bankInfo for proper preset→sample mapping once zone structure is implemented
+        _ = EmaxIIParser.parseBankData(bankData)
         let presetNames = extractPresetNames(from: bankData)
         
         // Build sample info list
