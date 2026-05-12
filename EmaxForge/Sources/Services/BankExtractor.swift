@@ -5,7 +5,7 @@ import Foundation
 /// Disk layout (verified against working disk, Mar 18 2026):
 ///   BNT: at sector header[0x10]*512 (NOT hardcoded 0x1000!)
 ///   FAT: ALWAYS at 0x400
-///   Cluster offset: ca_off + (cluster - 1) * clusterSize  (1-based)
+///   Cluster offset: ca_off + cluster * clusterSize  (0-based, verified vs EmaxIIFileSystem.swift)
 struct BankExtractor {
 
     struct ExtractedBank {
@@ -114,37 +114,45 @@ struct BankExtractor {
         for i in 1..<maxEntries {  // Skip slot 0 (OS)
             let entryStart = i * 32
             guard entryStart + 32 <= bntData.count else { break }
-            let entry = bntData[entryStart..<(entryStart + 32)]
+            // Copy to a zero-based Data so subscript offsets are always relative
+            let entry = Data(bntData[entryStart..<(entryStart + 32)])
 
-            // Skip empty slots
-            guard !entry.allSatisfy({ $0 == 0x00 }) else { continue }
+            // Skip empty / deleted slots
+            guard !entry.allSatisfy({ $0 == 0x00 || $0 == 0xFF }) else { continue }
 
-            // flags must be 0x0081
+            // flags must be 0x0081  (+1A..+1B = offset 26)
             let flags = entry.readU16LE(at: 26)
             guard flags == 0x0081 else { continue }
 
-            // Parse name: ASCII, 14 chars, space/null padded
-            let nameBytes = entry[0..<14]
-            let name = String(bytes: nameBytes, encoding: .ascii)?
+            // BNT entry layout (verified against EmaxIIFileSystem.swift):
+            //   +00..+0F  name (16 bytes ASCII, space/null padded)
+            //   +10..+11  startCluster  (U16 LE)  — offset 16
+            //   +12..+13  clusterCount  (U16 LE)  — offset 18
+            //   +14..+15  numPresets    (U16 LE)  — offset 20
+            //   +18..+19  bankIndex     (U16 LE)  — offset 24
+            //   +1A..+1B  flags = 0x0081          — offset 26
+            let nameData = Data(entry[0..<16])
+            let name = String(data: nameData, encoding: .ascii)?
                 .trimmingCharacters(in: CharacterSet(charactersIn: " \0"))
                 ?? ""
             guard !name.isEmpty else { continue }
 
-            let startCluster = Int(entry.readU16LE(at: 18))
-            let clusterCount = Int(entry.readU16LE(at: 20))
+            let startCluster = Int(entry.readU16LE(at: 16))   // +10
+            let clusterCount = Int(entry.readU16LE(at: 18))   // +12
 
-            guard startCluster > 1, clusterCount > 0 else { continue }
-            guard startCluster + clusterCount - 1 <= totalClusters + 1 else { continue }
+            guard clusterCount > 0, startCluster + clusterCount - 1 <= totalClusters else { continue }
 
             // Follow FAT chain to read actual clusters (verify against f20)
             var chain = [Int]()
             var cur = startCluster
-            while cur > 1 && cur < fat.count && chain.count <= clusterCount + 10 {
+            while cur < fat.count && chain.count <= clusterCount + 10 {
                 chain.append(cur)
                 let next = Int(fat[cur])
                 if next == 0x7FFF { break }  // end-of-chain
+                if next == 0x8080 { break }  // compat EOC (old BankImporter format)
                 if next == 0x8000 { break }  // reserved
                 if next == 0x0000 { break }  // free — chain broken
+                if next == cur   { break }  // self-loop guard
                 cur = next
             }
 
@@ -159,8 +167,9 @@ struct BankExtractor {
                 : chain
 
             for cluster in readChain {
-                // 1-based: cluster n → caOffset + (n-1) * clusterSize
-                let offset = caOffset + UInt64(cluster - 1) * UInt64(clusterSize)
+                // 0-based cluster addressing (verified against EmaxIIFileSystem.swift):
+                // cluster n → caOffset + n * clusterSize
+                let offset = caOffset + UInt64(cluster) * UInt64(clusterSize)
                 handle.seek(toFileOffset: offset)
                 guard let chunkData = try? handle.read(upToCount: clusterSize),
                       chunkData.count == clusterSize else {

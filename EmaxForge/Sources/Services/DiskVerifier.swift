@@ -104,6 +104,10 @@ class DiskVerifier {
             } else if val == 0x7FFF {
                 usedClusters += 1
                 chainEnds += 1
+            } else if val == 0x8080 {
+                // compat end-of-chain (old BankImporter format; treat as valid EOC)
+                usedClusters += 1
+                chainEnds += 1
             } else if val == 0x8000 {
                 // reserved marker
             } else if val < UInt16(fatEntryCount) {
@@ -124,7 +128,7 @@ class DiskVerifier {
         var chainErrors = 0
         for i in 1..<fatEntryCount {
             let val = fatData.readU16LE(at: i * 2)
-            if val != 0x0000 && val != 0x7FFF && val != 0x8000 && val < UInt16(fatEntryCount) {
+            if val != 0x0000 && val != 0x7FFF && val != 0x8080 && val != 0x8000 && val < UInt16(fatEntryCount) {
                 // Follow chain, detect loops
                 var visited = Set<Int>()
                 var cur = Int(val)
@@ -136,7 +140,7 @@ class DiskVerifier {
                     }
                     visited.insert(cur)
                     let next = fatData.readU16LE(at: cur * 2)
-                    if next == 0x7FFF { break }
+                    if next == 0x7FFF || next == 0x8080 { break }
                     if next == 0x0000 { chainErrors += 1; break }
                     cur = Int(next)
                     steps += 1
@@ -169,24 +173,29 @@ class DiskVerifier {
             if isEmpty { continue }
             
             let name = String(data: entry[0..<16], encoding: .ascii)?.trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
-            let cluster = Int(entry.readU16LE(at: 18))
+            // BNT field layout (verified empirically against HD0.hda, May 2026):
+            //   [16-17]: startCluster (0x7800 = OS special marker, 0-based for user banks)
+            //   [18-19]: clusterCount (stored hint; FAT chain is authoritative)
+            let startCluster = Int(entry.readU16LE(at: 16))
             let flags = entry.readU16LE(at: 26)
-            
+
             if i == 0 && name.contains("Software") {
                 osFound = true
-                checks.append(Check(name: "OS entry", passed: cluster == 1, detail: "'\(name)' cluster=\(cluster) flags=0x\(String(flags, radix: 16))"))
+                // OS entry uses 0x7800 as startCluster special marker (not a real cluster)
+                let isValidOSEntry = startCluster == 0x7800 || startCluster == 0x0000
+                checks.append(Check(name: "OS entry", passed: isValidOSEntry, detail: "'\(name)' startCluster=0x\(String(startCluster, radix: 16)) flags=0x\(String(flags, radix: 16))"))
             } else {
                 bankCount += 1
                 duplicateNames[name, default: 0] += 1
-                clusterConflicts[cluster, default: []].append(i)
-                
+                clusterConflicts[startCluster, default: []].append(i)
+
                 // Bank cluster should be in FAT range and allocated
-                if cluster >= fatEntryCount {
-                    warnings.append("Bank '\(name)' [slot \(i)] cluster \(cluster) beyond FAT range (\(fatEntryCount))")
+                if startCluster >= fatEntryCount {
+                    warnings.append("Bank '\(name)' [slot \(i)] cluster \(startCluster) beyond FAT range (\(fatEntryCount))")
                 } else {
-                    let fatVal = fatData.readU16LE(at: cluster * 2)
+                    let fatVal = fatData.readU16LE(at: startCluster * 2)
                     if fatVal == 0x0000 {
-                        warnings.append("Bank '\(name)' [slot \(i)] cluster \(cluster) not allocated in FAT")
+                        warnings.append("Bank '\(name)' [slot \(i)] cluster \(startCluster) not allocated in FAT")
                     }
                 }
             }

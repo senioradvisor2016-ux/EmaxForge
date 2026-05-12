@@ -215,12 +215,13 @@ class BankImporter {
             }
         }
 
-        // Update FAT chain — EMXP uses 0x8080 as end-of-chain marker (verified Mar 22 2026)
+        // Update FAT chain — use 0x7FFF as end-of-chain (EMAX II hardware standard).
+        // All readers (EmaxIIFileSystem.traceChain, BankExtractor, DiskInspectorService) expect 0x7FFF.
         for i in 0..<allocated.count {
             let cluster = allocated[i]
             fat[cluster] = i < allocated.count - 1
                 ? UInt16(allocated[i + 1])
-                : 0x8080  // end-of-chain (EMXP format)
+                : 0x7FFF  // end-of-chain
         }
 
         // Write updated FAT at 0x400

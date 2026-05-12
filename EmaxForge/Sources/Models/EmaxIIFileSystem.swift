@@ -761,7 +761,7 @@ enum EmaxIIParser {
         
         while current < fat.count {
             let next = Int(fat[current])
-            if next == 0x7FFF || next == 0 { break }
+            if next == 0x7FFF || next == 0x8080 || next == 0 { break }  // 0x8080 = compat EOC
             if seen.contains(next) { break }
             seen.insert(next)
             chain.append(next)

@@ -37,8 +37,8 @@ struct FATSummary {
 struct DiskBankInfo {
     let catalogIndex: Int
     let name: String
-    let startCluster: UInt16    // BNT +0x12
-    let clusterCount: UInt16    // BNT +0x14
+    let startCluster: UInt16    // BNT +0x10 (0-based cluster index)
+    let clusterCount: UInt16    // BNT +0x12 (stored hint; authoritative count = fatChain.count)
     let sizeBytes: Int          // fatChain.count * clusterSize
     let fatChain: [Int]         // Actual cluster chain traced from FAT
     let fatChainValid: Bool     // false if cycle / out-of-bounds / premature free
@@ -71,15 +71,14 @@ enum DiskHealthWarning: Equatable {
 ///   BNT:     sector header[0x10]*512, 32 bytes/entry
 ///   Clusters: sector header[0x20]*512
 ///
-/// BNT entry layout (verified byte-for-byte):
-///   +0x00..+0x0D  name (14 chars, ASCII, space-padded)
-///   +0x0E..+0x0F  0x00 0x00
-///   +0x10..+0x11  idx (preset address)
-///   +0x12..+0x13  start_cluster (UInt16 LE)
-///   +0x14..+0x15  cluster_count (UInt16 LE)
-///   +0x16..+0x17  f22
-///   +0x18..+0x19  f24
-///   +0x1A..+0x1B  flags (0x0081 = active)
+/// BNT entry layout (verified empirically against HD0.hda byte-level analysis, May 2026):
+///   +0x00..+0x0F  name (16 bytes, ASCII, space/null padded)
+///   +0x10..+0x11  startCluster (U16 LE, 0-based; 0x7800 = OS special marker)
+///   +0x12..+0x13  clusterCount (U16 LE, stored hint; authoritative count comes from FAT chain)
+///   +0x14..+0x15  numPresets   (U16 LE)
+///   +0x16..+0x17  f22 (unknown, range 0-0x1FF)
+///   +0x18..+0x19  bankIndex (idx, preset address)
+///   +0x1A..+0x1B  flags (0x0081 = active user bank)
 ///   +0x1C..+0x1F  zeros
 enum DiskInspectorService {
 
@@ -193,10 +192,12 @@ enum DiskInspectorService {
                 .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
             guard !name.isEmpty else { continue }
 
-            // BNT offsets verified against EmaxII-02.ez2 and BankImporter.swift
-            let startCluster = entry.readU16LE(at: 18)  // +0x12
+            // BNT offsets verified empirically against HD0.hda (May 2026) and EmaxIIFileSystem.swift:
+            //   startCluster at +0x10 (offset 16) — 0x7800 = OS marker, 0x0000 = cluster 0 (STEEL DRUMS), etc.
+            //   clusterCount at +0x12 (offset 18) — stored hint, FAT chain is authoritative
+            let startCluster = entry.readU16LE(at: 16)  // +0x10
             if startCluster == 0xFFFF { continue }
-            let clusterCount = entry.readU16LE(at: 20)  // +0x14
+            let clusterCount = entry.readU16LE(at: 18)  // +0x12
             let flags        = entry.readU16LE(at: 26)  // +0x1A
 
             let (chain, valid) = traceChainValidated(fat: fat, start: Int(startCluster))
@@ -269,6 +270,7 @@ enum DiskInspectorService {
         while current < fat.count {
             let next = Int(fat[current])
             if next == 0x7FFF { break }          // normal end-of-chain
+            if next == 0x8080 { break }          // compat EOC (old BankImporter format)
             if next == 0x0000 {                  // premature free cluster → broken
                 valid = false; break
             }
@@ -293,7 +295,7 @@ enum DiskInspectorService {
 
         while current < fat.count {
             let next = Int(fat[current])
-            if next == 0x7FFF || next == 0x0000 || next == 0x8000 { break }
+            if next == 0x7FFF || next == 0x8080 || next == 0x0000 || next == 0x8000 { break }
             if seen.contains(next) { break }
             seen.insert(next)
             chain.append(next)
