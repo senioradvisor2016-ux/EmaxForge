@@ -499,41 +499,54 @@ enum EmaxIIParser {
         )
     }
     
-    /// Parse first preset info for display
+    /// Parse first preset info for display.
+    ///
+    /// All field reads are relative to `presetBase`:
+    ///   +0x00  preset type marker
+    ///   +0x03  volume
+    ///   +0x05  transpose
+    ///   +0x06  tuneCoarse
+    ///   +0x07  tuneFine
+    ///   +0x40…+0x70  zone assignment map (48 bytes)
+    ///
+    /// For EB2: presetBase = 0x1B8; for EMX: presetBase = 0x200.
     private static func parseFirstPreset(_ data: Data, presetBase: Int) -> (
         EmaxIIBankData.PresetType, EmaxIIBankData.PresetHeader?, Int
     ) {
         guard data.count > presetBase + 0x28 else {
             return (.unknown(0), nil, 0)
         }
-        
-        let marker = data[0x1B8]
+
+        let marker = data[presetBase]
         let presetType: EmaxIIBankData.PresetType
         var presetHeader: EmaxIIBankData.PresetHeader?
-        
+
         switch marker {
         case 0x41:
             presetType = .singleA
-            if data.count > 0x1BF {
+            if data.count > presetBase + 7 {
                 presetHeader = EmaxIIBankData.PresetHeader(
-                    volume: data[0x1BB], transpose: data[0x1BD],
-                    tuneCoarse: data[0x1BE], tuneFine: data[0x1BF]
+                    volume: data[presetBase + 3], transpose: data[presetBase + 5],
+                    tuneCoarse: data[presetBase + 6], tuneFine: data[presetBase + 7]
                 )
             }
         case 0x01: presetType = .multi
         default: presetType = .unknown(marker)
         }
-        
+
+        // Zone assignment map: 48 bytes at presetBase+0x40 (same relative offset for both formats)
         var numZones = 0
-        if data.count >= 0x228 {
+        let zoneMapStart = presetBase + 0x40
+        let zoneMapEnd   = presetBase + 0x70
+        if data.count >= zoneMapEnd {
             var maxZone: Int = -1
-            for i in 0x1F8..<0x228 {
+            for i in zoneMapStart..<zoneMapEnd {
                 let z = Int(data[i])
                 if z != 0xFF && z > maxZone { maxZone = z }
             }
             numZones = maxZone + 1
         }
-        
+
         return (presetType, presetHeader, numZones)
     }
     
