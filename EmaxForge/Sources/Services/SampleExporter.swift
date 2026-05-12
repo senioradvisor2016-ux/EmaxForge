@@ -56,35 +56,56 @@ class SampleExporter {
     }
     
     // MARK: - Single Sample Export
-    
-    /// Export a single sample entry to WAV or AIFF
+
+    /// Export a single sample entry to WAV or AIFF.
+    ///
+    /// - Parameters:
+    ///   - sample: The sample to export.
+    ///   - directory: Destination directory URL.
+    ///   - format: Audio format (.wav / .aiff).
+    ///   - normalize: Maximize amplitude before writing.
+    ///   - filenameTemplate: Optional naming template (default: just the sample name).
+    ///   - bankName: Bank name for template variables (default: empty).
+    ///   - sampleIndex: 1-based sample index for `{index}` variable (default: 1).
+    ///   - bankIndex: 1-based bank index on disk for `{bankindex}` variable (default: 1).
     static func exportSample(
         _ sample: BankSampleData.SampleEntry,
         to directory: URL,
         format: ExportFormat = .wav,
-        normalize: Bool = false
+        normalize: Bool = false,
+        filenameTemplate: SampleFilenameTemplate = .default,
+        bankName: String = "",
+        sampleIndex: Int = 1,
+        bankIndex: Int = 1
     ) throws -> ExportResult {
         guard !sample.pcmData.isEmpty else { throw ExportError.noSampleData }
-        
-        let sanitizedName = sanitizeFilename(sample.name)
+
+        let context = SampleFilenameTemplate.Context(
+            bankName: bankName.isEmpty ? "UNKNOWN" : bankName,
+            sampleName: sample.name,
+            sampleIndex: sampleIndex,
+            bankIndex: bankIndex,
+            date: Date()
+        )
+        let resolvedName = filenameTemplate.resolve(context: context)
         let outputURL = directory
-            .appendingPathComponent(sanitizedName)
+            .appendingPathComponent(resolvedName)
             .appendingPathExtension(format.fileExtension)
         
         var pcmData = sample.pcmData
         if normalize {
             pcmData = normalizePCM(pcmData)
         }
-        
+
         try writePCMToFile(
             pcmData: pcmData,
             sampleRate: Double(sample.sampleRate),
             to: outputURL,
             format: format
         )
-        
+
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0
-        
+
         return ExportResult(
             sampleName: sample.name,
             outputURL: outputURL,
@@ -93,7 +114,7 @@ class SampleExporter {
             fileSize: fileSize
         )
     }
-    
+
     // MARK: - Batch Export (all samples from a bank)
     
     /// Export all samples from a bank to a directory
