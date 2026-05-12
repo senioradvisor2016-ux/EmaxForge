@@ -149,7 +149,9 @@ public struct BootDiskValidator {
             handle.seek(toFileOffset: bntOffset)
             let bntEntry = handle.readData(ofLength: 32)
             if bntEntry.count >= 28 {
-                let flags = UInt16(bntEntry[22]) | (UInt16(bntEntry[23]) << 8)
+                // BNT entry layout: +0x1A..+0x1B = flags (verified vs EmaxIIFileSystem.swift:344)
+                // +0x16..+0x17 is an unrelated field (f22); do NOT read from offset 22.
+                let flags = UInt16(bntEntry[26]) | (UInt16(bntEntry[27]) << 8)
                 // Valid flag values seen in all EMXP templates
                 let validFlags: [UInt16] = [0x0000, 0x0068, 0x0069, 0x0081, 0x7800]
                 let knownFlag = validFlags.contains(flags)
