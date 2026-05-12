@@ -54,9 +54,16 @@ class BankManager {
         guard data.count >= 0x28 else { throw BankError.invalidDiskStructure }
         let magic = String(data: data[0..<4], encoding: .ascii) ?? ""
         guard magic == "EMX2" else { throw BankError.invalidDiskStructure }
-        
+
+        // Cluster size from header[0x04]. Do NOT require % 512 == 0 — the EMAX II format
+        // stores opaque byte-count values that may not be sector-aligned (e.g. 96 MB → 196352,
+        // % 512 = 256; 962 MB → 1969408, % 512 = 256). Trust if non-zero and ≤ 4 MB.
+        let rawCS = Int(data.readU32LE(at: 0x04))
+        guard rawCS > 0 && rawCS <= 4_194_304 else {
+            throw BankError.operationFailed("Invalid cluster size in header: \(rawCS)")
+        }
         return Geo(
-            clusterSize:    Int(data.readU32LE(at: 0x04)),
+            clusterSize:    rawCS,
             bntStartSector: Int(data.readU32LE(at: 0x10)),
             maxBanks:       Int(data.readU32LE(at: 0x14)),
             fatSectors:     Int(data.readU32LE(at: 0x1C)),
