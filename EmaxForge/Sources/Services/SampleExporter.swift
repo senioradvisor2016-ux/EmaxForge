@@ -102,7 +102,10 @@ class SampleExporter {
             pcmData: pcmData,
             sampleRate: Double(sample.sampleRate),
             to: outputURL,
-            format: format
+            format: format,
+            loopStart: sample.loopStart,
+            loopEnd: sample.loopEnd,
+            rootKey: sample.rootKey
         )
 
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0
@@ -117,15 +120,27 @@ class SampleExporter {
     }
 
     // MARK: - Batch Export (all samples from a bank)
-    
-    /// Export all samples from a bank to a directory
+
+    /// Export all samples from a bank to a directory.
+    ///
+    /// - Parameters:
+    ///   - bankSamples:      Sample data parsed from the bank.
+    ///   - bankName:         Bank name used for the subfolder and template variable `{bank}`.
+    ///   - baseDirectory:    Root destination directory.
+    ///   - format:           Audio format (.wav / .aiff).
+    ///   - normalize:        Maximize amplitude before writing.
+    ///   - createSubfolder:  When `true`, creates `<bankName>/` under `baseDirectory`.
+    ///   - filenameTemplate: Naming template for each sample file (default: `{sample}`).
+    ///   - bankIndex:        1-based bank index on the disk (for `{bankindex}` variable).
     static func exportAllSamples(
         from bankSamples: BankSampleData,
         bankName: String,
         to baseDirectory: URL,
         format: ExportFormat = .wav,
         normalize: Bool = false,
-        createSubfolder: Bool = true
+        createSubfolder: Bool = true,
+        filenameTemplate: SampleFilenameTemplate = .default,
+        bankIndex: Int = 1
     ) throws -> [ExportResult] {
         let outputDir: URL
         if createSubfolder {
@@ -135,30 +150,39 @@ class SampleExporter {
         } else {
             outputDir = baseDirectory
         }
-        
+
+        let exportDate = Date()
         var results = [ExportResult]()
-        
+
         for (index, sample) in bankSamples.samples.enumerated() {
-            // Prefix with index for sort order
-            let numberedName = String(format: "%02d_%@", index + 1, sample.name)
-            
-            let sanitized = sanitizeFilename(numberedName)
+            let context = SampleFilenameTemplate.Context(
+                bankName: bankName.isEmpty ? "UNKNOWN" : bankName,
+                sampleName: sample.name,
+                sampleIndex: index + 1,
+                bankIndex: bankIndex,
+                date: exportDate,
+                rootKey: sample.rootKey
+            )
+            let resolvedName = filenameTemplate.resolve(context: context)
             let outputURL = outputDir
-                .appendingPathComponent(sanitized)
+                .appendingPathComponent(resolvedName)
                 .appendingPathExtension(format.fileExtension)
-            
+
             var pcmData = sample.pcmData
             if normalize { pcmData = normalizePCM(pcmData) }
-            
+
             try writePCMToFile(
                 pcmData: pcmData,
                 sampleRate: Double(sample.sampleRate),
                 to: outputURL,
-                format: format
+                format: format,
+                loopStart: sample.loopStart,
+                loopEnd: sample.loopEnd,
+                rootKey: sample.rootKey
             )
-            
+
             let fileSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0
-            
+
             results.append(ExportResult(
                 sampleName: sample.name,
                 outputURL: outputURL,
@@ -167,7 +191,7 @@ class SampleExporter {
                 fileSize: fileSize
             ))
         }
-        
+
         return results
     }
     
@@ -210,13 +234,19 @@ class SampleExporter {
     }
     
     // MARK: - PCM Writing
-    
-    /// Write 16-bit LE PCM data to a WAV or AIFF file
+
+    /// Write 16-bit LE PCM data to a WAV or AIFF file.
+    ///
+    /// For WAV output, if `loopStart` and `loopEnd` are provided a `smpl` chunk is appended
+    /// so that the loop points round-trip through any sampler that reads standard WAV metadata.
     private static func writePCMToFile(
         pcmData: Data,
         sampleRate: Double,
         to url: URL,
-        format: ExportFormat
+        format: ExportFormat,
+        loopStart: Int? = nil,
+        loopEnd: Int? = nil,
+        rootKey: Int = 60
     ) throws {
         let frameCount = pcmData.count / 2  // 16-bit = 2 bytes per frame
         guard frameCount > 0 else { throw ExportError.noSampleData }
@@ -250,17 +280,21 @@ class SampleExporter {
             throw ExportError.createFileFailed
         }
         
-        defer { AudioFileClose(file) }
-        
-        // Write data
+        // Write data, then close before we patch in the smpl chunk
         if format == .wav {
             // WAV uses little-endian 16-bit — our data is already LE
             var numBytes = UInt32(pcmData.count)
             let writeStatus = pcmData.withUnsafeBytes { rawBuf in
                 AudioFileWriteBytes(file, false, 0, &numBytes, rawBuf.baseAddress!)
             }
+            AudioFileClose(file)
             guard writeStatus == noErr else {
                 throw ExportError.writeFailed("AudioFileWriteBytes failed: \(writeStatus)")
+            }
+            // Append smpl chunk so loop points survive into any sampler that reads WAV metadata
+            if let ls = loopStart, let le = loopEnd, ls < le {
+                appendSmplChunkToWAV(at: url, rootKey: rootKey, loopStart: ls, loopEnd: le,
+                                     sampleRate: UInt32(sampleRate))
             }
         } else {
             // AIFF uses big-endian — need to byte-swap
@@ -279,10 +313,61 @@ class SampleExporter {
             let writeStatus = beData.withUnsafeBytes { rawBuf in
                 AudioFileWriteBytes(file, false, 0, &numBytes, rawBuf.baseAddress!)
             }
+            AudioFileClose(file)
             guard writeStatus == noErr else {
                 throw ExportError.writeFailed("AudioFileWriteBytes failed: \(writeStatus)")
             }
         }
+    }
+
+    /// Append a `smpl` chunk to an existing WAV file and update the RIFF size field.
+    ///
+    /// The smpl chunk encodes the MIDI root key and a single forward loop so that
+    /// DAWs and samplers can reconstruct the loop after round-tripping through WAV.
+    private static func appendSmplChunkToWAV(
+        at url: URL,
+        rootKey: Int,
+        loopStart: Int,
+        loopEnd: Int,
+        sampleRate: UInt32
+    ) {
+        guard var wavData = try? Data(contentsOf: url) else { return }
+
+        // Build smpl chunk body (36 header bytes + 24 loop bytes = 60 bytes)
+        func le32(_ v: UInt32) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
+
+        var body = Data()
+        body += le32(0)                          // manufacturer
+        body += le32(0)                          // product
+        body += le32(sampleRate > 0 ? 1_000_000_000 / sampleRate : 0)  // sample period (ns)
+        body += le32(UInt32(max(0, min(127, rootKey))))  // MIDI unity note
+        body += le32(0)                          // MIDI pitch fraction
+        body += le32(0)                          // SMPTE format
+        body += le32(0)                          // SMPTE offset
+        body += le32(1)                          // num sample loops
+        body += le32(0)                          // sampler data bytes
+        // Loop 0
+        body += le32(0)                          // cue point ID
+        body += le32(0)                          // type (0 = forward)
+        body += le32(UInt32(loopStart))          // start sample frame
+        body += le32(UInt32(loopEnd))            // end sample frame
+        body += le32(0)                          // fraction
+        body += le32(0)                          // play count (0 = infinite)
+
+        var smplChunk = Data()
+        smplChunk += "smpl".data(using: .ascii)!
+        smplChunk += le32(UInt32(body.count))
+        smplChunk += body
+
+        wavData += smplChunk
+
+        // Update RIFF size at bytes 4–7 (total file size minus the "RIFF" tag + size field = size - 8)
+        let newRIFFSize = UInt32(wavData.count - 8)
+        wavData.withUnsafeMutableBytes { ptr in
+            ptr.storeBytes(of: newRIFFSize.littleEndian, toByteOffset: 4, as: UInt32.self)
+        }
+
+        try? wavData.write(to: url)
     }
     
     // MARK: - Raw PCM Export (used by SampleBrowserView)
