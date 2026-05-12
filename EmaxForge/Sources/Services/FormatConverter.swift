@@ -104,22 +104,22 @@ class FormatConverter {
             throw FormatError.hfeParseError("Invalid HFE magic")
         }
         
-        // HFE header
-        let revision = data[8]
-        let numTracks = Int(data.readU16LE(at: 9))
-        let numSides = Int(data[11])
-        let trackEncoding = data[12] // 0=ISOIBM_MFM, 2=AMIGA_MFM
-        let bitRate = Int(data.readU16LE(at: 14))
-        let floppyRPM = Int(data.readU16LE(at: 16))
-        let floppyInterfaceMode = data[18]
-        
+        // HFE header (parsed for future MFM decoder; currently unused — bank scan below)
+        _ = data[8]           // revision
+        _ = Int(data.readU16LE(at: 9))   // numTracks
+        _ = Int(data[11])     // numSides
+        _ = data[12]          // trackEncoding  (0=ISOIBM_MFM, 2=AMIGA_MFM)
+        _ = Int(data.readU16LE(at: 14))  // bitRate
+        _ = Int(data.readU16LE(at: 16))  // floppyRPM
+        _ = data[18]          // floppyInterfaceMode
+
         // Track offset table starts at 0x200
         // Each entry: 2 bytes offset (in 512-byte blocks), 2 bytes length
-        
+
         // For EMAX II floppies, the data is MFM encoded
         // We need to decode MFM → raw sector data → find EB2 banks
         // This is complex — for now, try to find raw bank data by scanning
-        
+
         return try scanForBanks(in: data)
     }
     
@@ -197,7 +197,7 @@ class FormatConverter {
         for url in urls {
             do {
                 let banks = try convertToEB2(url: url)
-                for (name, data) in banks {
+                for (_, data) in banks {
                     // Write to temp, then import
                     let tempURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent(UUID().uuidString)

@@ -125,59 +125,107 @@ class SoundFontConverter {
         var instruments: [Instrument] = []
         var samples: [Sample] = []
         var sampleData: Data?
-        
-        // Parse chunks
+        var pendingRecords: [SampleRecord] = []
+
+        // Parse top-level chunks (sdta and pdta are both LIST chunks at this level)
         while offset < data.count - 8 {
             let chunkID = String(data: data[offset..<(offset + 4)], encoding: .ascii) ?? ""
             let chunkSize = data.readU32LE(at: offset + 4)
             offset += 8
-            
+
             switch chunkID {
             case "LIST":
                 let listType = String(data: data[offset..<(offset + 4)], encoding: .ascii) ?? ""
                 offset += 4
                 let listSize = Int(chunkSize) - 4
-                
+
                 if listType == "pdta" {
-                    // Parse preset data
-                    let (parsedPresets, parsedInstruments) = try parsePDTA(data: data, offset: offset, size: listSize)
-                    presets = parsedPresets
-                    instruments = parsedInstruments
+                    // shdr is a sub-chunk of pdta — parse everything here
+                    let (parsedPresets, parsedInstruments, parsedRecords) = try parsePDTA(
+                        data: data, offset: offset, size: listSize)
+                    presets      = parsedPresets
+                    instruments  = parsedInstruments
+                    if let sd = sampleData {
+                        // sdta already seen — build samples immediately
+                        samples = buildSamples(from: parsedRecords, sampleData: sd)
+                    } else {
+                        // sdta comes after pdta in this file — defer
+                        pendingRecords = parsedRecords
+                    }
                 } else if listType == "sdta" {
-                    // Parse sample data
                     sampleData = try parseSDTA(data: data, offset: offset, size: listSize)
+                    if !pendingRecords.isEmpty, let sd = sampleData {
+                        // pdta was seen before sdta — build samples now
+                        samples = buildSamples(from: pendingRecords, sampleData: sd)
+                        pendingRecords = []
+                    }
                 }
-                
+
                 offset += listSize
-                
+
             default:
                 offset += Int(chunkSize)
             }
-            
+
             // Align to even boundary
-            if offset % 2 != 0 {
-                offset += 1
-            }
+            if offset % 2 != 0 { offset += 1 }
         }
-        
-        // Parse sample headers (from pdta)
-        if let sdta = sampleData {
-            samples = try parseSampleHeaders(data: data, sampleData: sdta)
-        }
-        
+
         return (presets, instruments, samples)
     }
+
+    /// Attach PCM data to parsed shdr records, producing full Sample objects.
+    private static func buildSamples(from records: [SampleRecord], sampleData: Data) -> [Sample] {
+        records.compactMap { rec in
+            // SF2 sample offsets are in sample-frames (16-bit), not bytes
+            let byteStart  = Int(rec.start) * 2
+            let byteEnd    = Int(rec.end)   * 2
+            guard byteStart < byteEnd, byteEnd <= sampleData.count else { return nil }
+            let pcm = Data(sampleData[byteStart..<byteEnd])
+            return Sample(
+                name: rec.name,
+                start: rec.start,
+                end: rec.end,
+                startLoop: rec.startLoop,
+                endLoop: rec.endLoop,
+                sampleRate: rec.sampleRate,
+                originalPitch: rec.originalPitch,
+                pitchCorrection: rec.pitchCorrection,
+                sampleLink: rec.sampleLink,
+                sampleType: rec.sampleType,
+                data: pcm
+            )
+        }
+    }
     
-    private static func parsePDTA(data: Data, offset: Int, size: Int) throws -> ([Preset], [Instrument]) {
+    /// Raw sample-header record parsed from an SF2 `shdr` sub-chunk.
+    /// PCM data is attached later (after sampleData is available).
+    struct SampleRecord {
+        let name: String
+        let start: UInt32
+        let end: UInt32
+        let startLoop: UInt32
+        let endLoop: UInt32
+        let sampleRate: UInt32
+        let originalPitch: UInt8
+        let pitchCorrection: Int8
+        let sampleLink: UInt16
+        let sampleType: UInt16
+    }
+
+    private static func parsePDTA(data: Data, offset: Int, size: Int)
+        throws -> ([Preset], [Instrument], [SampleRecord])
+    {
         var pos = offset
         var presets: [Preset] = []
         var instruments: [Instrument] = []
-        
+        var sampleRecords: [SampleRecord] = []
+
         while pos < offset + size - 8 {
             let chunkID = String(data: data[pos..<(pos + 4)], encoding: .ascii) ?? ""
             let chunkSize = data.readU32LE(at: pos + 4)
             pos += 8
-            
+
             switch chunkID {
             case "phdr":
                 // Preset headers: 38 bytes each
@@ -193,7 +241,7 @@ class SoundFontConverter {
                         let library = data.readU32LE(at: presetOffset + 26)
                         let genre = data.readU32LE(at: presetOffset + 30)
                         let morphology = data.readU32LE(at: presetOffset + 34)
-                        
+
                         presets.append(Preset(
                             name: name,
                             bank: bank,
@@ -205,7 +253,7 @@ class SoundFontConverter {
                         ))
                     }
                 }
-                
+
             case "inst":
                 // Instrument headers: 22 bytes each
                 let count = Int(chunkSize) / 22
@@ -215,23 +263,56 @@ class SoundFontConverter {
                         let name = String(data: data[instOffset..<(instOffset + 20)], encoding: .ascii)?
                             .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
                         let instrumentBagIndex = UInt16(data.readU16LE(at: instOffset + 20))
-                        
+
                         instruments.append(Instrument(
                             name: name,
                             instrumentBagIndex: instrumentBagIndex
                         ))
                     }
                 }
-                
+
+            case "shdr":
+                // Sample headers: 46 bytes each (last entry is EOS sentinel, skip it)
+                let count = max(0, Int(chunkSize) / 46 - 1)
+                for i in 0..<count {
+                    let shdrOffset = pos + (i * 46)
+                    if shdrOffset + 46 <= data.count {
+                        let name = String(data: data[shdrOffset..<(shdrOffset + 20)], encoding: .ascii)?
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
+                        let start           = data.readU32LE(at: shdrOffset + 20)
+                        let end             = data.readU32LE(at: shdrOffset + 24)
+                        let startLoop       = data.readU32LE(at: shdrOffset + 28)
+                        let endLoop         = data.readU32LE(at: shdrOffset + 32)
+                        let sampleRate      = data.readU32LE(at: shdrOffset + 36)
+                        let originalPitch   = data[shdrOffset + 40]
+                        let pitchCorrection = Int8(bitPattern: data[shdrOffset + 41])
+                        let sampleLink      = data.readU16LE(at: shdrOffset + 42)
+                        let sampleType      = data.readU16LE(at: shdrOffset + 44)
+
+                        sampleRecords.append(SampleRecord(
+                            name: name,
+                            start: start,
+                            end: end,
+                            startLoop: startLoop,
+                            endLoop: endLoop,
+                            sampleRate: sampleRate,
+                            originalPitch: originalPitch,
+                            pitchCorrection: pitchCorrection,
+                            sampleLink: sampleLink,
+                            sampleType: sampleType
+                        ))
+                    }
+                }
+
             default:
                 break
             }
-            
+
             pos += Int(chunkSize)
             if pos % 2 != 0 { pos += 1 }
         }
-        
-        return (presets, instruments)
+
+        return (presets, instruments, sampleRecords)
     }
     
     private static func parseSDTA(data: Data, offset: Int, size: Int) throws -> Data? {
@@ -251,64 +332,6 @@ class SoundFontConverter {
         }
         
         return nil
-    }
-    
-    private static func parseSampleHeaders(data: Data, sampleData: Data) throws -> [Sample] {
-        // Find shdr chunk in pdta
-        var offset = 0
-        var samples: [Sample] = []
-        
-        while offset < data.count - 8 {
-            let chunkID = String(data: data[offset..<(offset + 4)], encoding: .ascii) ?? ""
-            let chunkSize = data.readU32LE(at: offset + 4)
-            offset += 8
-            
-            if chunkID == "shdr" {
-                // Sample headers: 46 bytes each
-                let count = Int(chunkSize) / 46
-                for i in 0..<count {
-                    let shdrOffset = offset + (i * 46)
-                    if shdrOffset + 46 <= data.count {
-                        let name = String(data: data[shdrOffset..<(shdrOffset + 20)], encoding: .ascii)?
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
-                        let start = data.readU32LE(at: shdrOffset + 20)
-                        let end = data.readU32LE(at: shdrOffset + 24)
-                        let startLoop = data.readU32LE(at: shdrOffset + 28)
-                        let endLoop = data.readU32LE(at: shdrOffset + 32)
-                        let sampleRate = data.readU32LE(at: shdrOffset + 36)
-                        let originalPitch = data[shdrOffset + 40]
-                        let pitchCorrection = Int8(bitPattern: data[shdrOffset + 41])
-                        let sampleLink = data.readU16LE(at: shdrOffset + 42)
-                        let sampleType = data.readU16LE(at: shdrOffset + 44)
-                        
-                        // Extract sample data (16-bit signed PCM)
-                        let sampleStart = Int(start) * 2  // 16-bit = 2 bytes per sample
-                        let sampleLength = Int(end - start) * 2
-                        let sampleBytes = sampleData[sampleStart..<min(sampleStart + sampleLength, sampleData.count)]
-                        
-                        samples.append(Sample(
-                            name: name,
-                            start: start,
-                            end: end,
-                            startLoop: startLoop,
-                            endLoop: endLoop,
-                            sampleRate: sampleRate,
-                            originalPitch: originalPitch,
-                            pitchCorrection: pitchCorrection,
-                            sampleLink: sampleLink,
-                            sampleType: sampleType,
-                            data: Data(sampleBytes)
-                        ))
-                    }
-                }
-                break
-            }
-            
-            offset += Int(chunkSize)
-            if offset % 2 != 0 { offset += 1 }
-        }
-        
-        return samples
     }
     
     // MARK: - EB2 Conversion

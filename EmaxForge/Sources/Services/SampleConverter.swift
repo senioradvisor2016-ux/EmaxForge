@@ -174,10 +174,10 @@ class SampleConverter {
         // --- Zone map (key-to-zone assignment) ---
         // First zone map (42 bytes): pairs of keys
         var zoneMap1 = Data(repeating: 0xFF, count: 42)
-        for sample in samples {
+        for (idx, sample) in samples.enumerated() {
             let startPair = Int(sample.lowKey) / 2
             let endPair = min(Int(sample.highKey) / 2, 41)
-            let zoneIdx = UInt8(samples.firstIndex(where: { $0.rootKey == sample.rootKey }) ?? 0)
+            let zoneIdx = UInt8(idx)
             for p in startPair...endPair {
                 zoneMap1[p] = zoneIdx
             }

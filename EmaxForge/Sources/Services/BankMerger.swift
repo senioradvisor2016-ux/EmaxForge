@@ -68,8 +68,12 @@ class BankMerger {
     private static let presetKeyMapOffset = 0x24         // within preset block
     private static let presetKeyMapLength = 88
     private static let sampleParamName   = 0x20          // within sample param block (16 bytes)
-    private static let sampleParamStart  = 0x00          // UInt32 startAddress offset
-    private static let sampleParamEnd    = 0x04          // UInt32 endAddress offset
+    private static let sampleParamStart            = 0x00  // UInt32 startAddress offset
+    private static let sampleParamEnd              = 0x04  // UInt32 endAddress offset
+    private static let sampleParamLoopSustainStart = 0x0C  // UInt32 sustain loop start
+    private static let sampleParamLoopSustainEnd   = 0x10  // UInt32 sustain loop end
+    private static let sampleParamLoopReleaseStart = 0x14  // UInt32 release loop start
+    private static let sampleParamLoopReleaseEnd   = 0x18  // UInt32 release loop end
 
     // MARK: - Main merge entry point
 
@@ -285,6 +289,18 @@ class BankMerger {
             let newEnd   = sample.endAddr   + appendOffset
             bm_writeU32LE(newStart, into: &targetData, at: targetParamBase + Self.sampleParamStart)
             bm_writeU32LE(newEnd,   into: &targetData, at: targetParamBase + Self.sampleParamEnd)
+
+            // Adjust loop-point addresses (same coordinate space as startAddr/endAddr).
+            // 0 means "no loop / disabled" — leave those untouched.
+            for loopOff in [Self.sampleParamLoopSustainStart,
+                            Self.sampleParamLoopSustainEnd,
+                            Self.sampleParamLoopReleaseStart,
+                            Self.sampleParamLoopReleaseEnd] {
+                let raw = bm_readU32LE(targetData, at: targetParamBase + loopOff)
+                if raw > 0 {
+                    bm_writeU32LE(raw &+ appendOffset, into: &targetData, at: targetParamBase + loopOff)
+                }
+            }
         }
 
         // --- Write new PCM data into target ---

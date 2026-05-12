@@ -348,4 +348,183 @@ final class MiscServiceTests: XCTestCase {
             XCTFail("Expected ValidatorError.fileNotFound, got \(error)")
         }
     }
+
+    // MARK: - SoundFontConverter.SampleRecord field access
+
+    func testSoundFontSampleRecordFieldAccess() {
+        let r = SoundFontConverter.SampleRecord(
+            name: "Piano C4", start: 0, end: 1000,
+            startLoop: 100, endLoop: 900,
+            sampleRate: 44100, originalPitch: 60,
+            pitchCorrection: -2, sampleLink: 0, sampleType: 1
+        )
+        XCTAssertEqual(r.name, "Piano C4")
+        XCTAssertEqual(r.start, 0)
+        XCTAssertEqual(r.end, 1000)
+        XCTAssertEqual(r.startLoop, 100)
+        XCTAssertEqual(r.endLoop, 900)
+        XCTAssertEqual(r.sampleRate, 44100)
+        XCTAssertEqual(r.originalPitch, 60)
+        XCTAssertEqual(r.pitchCorrection, -2)
+        XCTAssertEqual(r.sampleType, 1)
+    }
+
+    // MARK: - SoundFontConverter SF2 parsing regression tests
+    //
+    // These tests verify that shdr is correctly parsed from the pdta LIST
+    // sub-chunk (the bug: parseSampleHeaders used to scan from offset 0 and
+    // skip the entire RIFF chunk in one step, so samples were never found).
+
+    /// Build a minimal SF2 blob with one preset and one sample.
+    private func makeMinimalSF2(putSdtaFirst: Bool = true) -> Data {
+        func le16(_ v: UInt16) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
+        func le32(_ v: UInt32) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
+        func ascii(_ s: String, pad: Int) -> Data {
+            var d = s.data(using: .ascii)!.prefix(pad)
+            if d.count < pad { d.append(Data(count: pad - d.count)) }
+            return d
+        }
+        func chunk(_ id: String, _ body: Data) -> Data {
+            var d = id.data(using: .ascii)!
+            d += le32(UInt32(body.count))
+            d += body
+            if body.count % 2 != 0 { d += Data([0]) }
+            return d
+        }
+        func list(_ type: String, _ body: Data) -> Data {
+            var b = type.data(using: .ascii)!
+            b += body
+            var d = "LIST".data(using: .ascii)!
+            d += le32(UInt32(b.count))
+            d += b
+            return d
+        }
+
+        // smpl: 4 16-bit samples (8 bytes)
+        let pcmFrames: UInt32 = 4
+        var smplBody = Data()
+        for _ in 0..<pcmFrames { smplBody += le16(0x1234) }
+        let sdta = list("sdta", chunk("smpl", smplBody))
+
+        // phdr: 1 preset + 1 EOS (2 × 38 bytes)
+        var phdrBody = Data()
+        phdrBody += ascii("TestPreset", pad: 20) + le16(0) + le16(0) + le16(0) + le32(0) + le32(0) + le32(0)
+        phdrBody += ascii("EOP", pad: 20) + le16(0) + le16(0) + le16(0) + le32(0) + le32(0) + le32(0)  // EOS sentinel
+
+        // shdr: 1 sample + 1 EOS (2 × 46 bytes)
+        var shdrBody = Data()
+        // Sample 0: frames [0,4)
+        shdrBody += ascii("TestSample", pad: 20)
+        shdrBody += le32(0)          // start (frames)
+        shdrBody += le32(pcmFrames)  // end (frames)
+        shdrBody += le32(1)          // startLoop
+        shdrBody += le32(3)          // endLoop
+        shdrBody += le32(22050)      // sampleRate
+        shdrBody += Data([69])       // originalPitch (A4)
+        shdrBody += Data([0])        // pitchCorrection
+        shdrBody += le16(0)          // sampleLink
+        shdrBody += le16(1)          // sampleType (monoSample)
+        // EOS sentinel (all zeros)
+        shdrBody += Data(count: 46)
+
+        // Minimal pbag/pmod/pgen/inst/ibag/imod/igen (each needs at least EOS)
+        let pbag = chunk("pbag", Data(count: 8))   // 2 × 4 bytes
+        let pmod = chunk("pmod", Data(count: 20))  // 2 × 10 bytes
+        let pgen = chunk("pgen", Data(count: 8))   // 2 × 4 bytes
+        let inst = chunk("inst", Data(count: 44))  // 2 × 22 bytes
+        let ibag = chunk("ibag", Data(count: 8))   // 2 × 4 bytes
+        let imod = chunk("imod", Data(count: 20))  // 2 × 10 bytes
+        let igen = chunk("igen", Data(count: 8))   // 2 × 4 bytes
+
+        let pdta = list("pdta",
+            chunk("phdr", phdrBody) + pbag + pmod + pgen +
+            inst + ibag + imod + igen +
+            chunk("shdr", shdrBody)
+        )
+
+        let info = list("INFO", chunk("ifil", le16(2) + le16(1)))
+
+        var sfbkBody: Data
+        if putSdtaFirst {
+            sfbkBody = info + sdta + pdta
+        } else {
+            sfbkBody = info + pdta + sdta
+        }
+
+        var riff = "RIFF".data(using: .ascii)!
+        riff += le32(UInt32(sfbkBody.count + 4))  // RIFF size = 4 ("sfbk") + body
+        riff += "sfbk".data(using: .ascii)!
+        riff += sfbkBody
+        return riff
+    }
+
+    /// SF2 parsing succeeds (no noSamples error) when sdta precedes pdta.
+    func testSF2ParseDoesNotThrowNoSamplesWhenSdtaBeforePdta() {
+        let sf2 = makeMinimalSF2(putSdtaFirst: true)
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("test_\(UUID().uuidString).sf2")
+        do {
+            try sf2.write(to: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let banks = try SoundFontConverter.convertToEB2(url: tmp)
+            XCTAssertFalse(banks.isEmpty, "Should produce at least one bank")
+        } catch SoundFontConverter.SoundFontError.noSamples {
+            XCTFail("noSamples — shdr was not found inside pdta LIST (regression)")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    /// SF2 parsing succeeds when pdta precedes sdta (deferred-record path).
+    func testSF2ParseDoesNotThrowNoSamplesWhenPdtaBeforeSdta() {
+        let sf2 = makeMinimalSF2(putSdtaFirst: false)
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("test_\(UUID().uuidString).sf2")
+        do {
+            try sf2.write(to: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let banks = try SoundFontConverter.convertToEB2(url: tmp)
+            XCTAssertFalse(banks.isEmpty, "Should produce at least one bank even when pdta precedes sdta")
+        } catch SoundFontConverter.SoundFontError.noSamples {
+            XCTFail("noSamples — deferred-record path did not resolve samples (regression)")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    /// The parsed bank name comes from the preset name in phdr.
+    func testSF2ParsedBankNameMatchesPresetName() {
+        let sf2 = makeMinimalSF2(putSdtaFirst: true)
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("test_\(UUID().uuidString).sf2")
+        do {
+            try sf2.write(to: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let banks = try SoundFontConverter.convertToEB2(url: tmp)
+            let names = banks.map { $0.name }
+            XCTAssertTrue(names.contains(where: { $0.contains("TestPreset") }),
+                          "Bank name should contain preset name 'TestPreset'; got \(names)")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    /// An invalid SF2 (wrong RIFF type) throws invalidFile.
+    func testSF2InvalidFileThrowsInvalidFile() {
+        // Replace "sfbk" with "XXXX" — parseSoundFont should throw invalidFile
+        var sf2 = makeMinimalSF2()
+        sf2.replaceSubrange(8..<12, with: "XXXX".data(using: .ascii)!)
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("test_\(UUID().uuidString).sf2")
+        do {
+            try sf2.write(to: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            _ = try SoundFontConverter.convertToEB2(url: tmp)
+            XCTFail("Should have thrown invalidFile")
+        } catch SoundFontConverter.SoundFontError.invalidFile {
+            // expected
+        } catch {
+            XCTFail("Expected invalidFile, got \(error)")
+        }
+    }
 }

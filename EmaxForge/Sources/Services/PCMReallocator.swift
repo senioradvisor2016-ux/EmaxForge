@@ -350,6 +350,19 @@ class PCMReallocator {
                 let newJEnd   = jEnd + delta
                 newBankData.writeU32LE(UInt32(max(0, newJStart)), at: jBase + EmaxIIFormat.paramStartAddr)
                 newBankData.writeU32LE(UInt32(max(0, newJEnd)),   at: jBase + EmaxIIFormat.paramEndAddr)
+
+                // Loop addresses are in the same coordinate space — adjust them too.
+                // Skip zero values (0 means no loop / disabled).
+                for loopOff in [EmaxIIFormat.paramSustainLoopStart,
+                                EmaxIIFormat.paramSustainLoopEnd,
+                                EmaxIIFormat.paramReleaseLoopStart,
+                                EmaxIIFormat.paramReleaseLoopEnd] {
+                    guard jBase + loopOff + 4 <= newBankData.count else { continue }
+                    let raw = Int(newBankData.readU32LE(at: jBase + loopOff))
+                    if raw > 0 {
+                        newBankData.writeU32LE(UInt32(max(0, raw + delta)), at: jBase + loopOff)
+                    }
+                }
             }
         }
 

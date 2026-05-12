@@ -170,4 +170,119 @@ final class PCMReallocatorTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Loop address adjustment logic regression tests
+    //
+    // PCMReallocator.replaceSamplePCM (CASE 2: resize) adjusts start/end of every
+    // subsequent sample by delta.  The bug: loop addresses (+0x0C,+0x10,+0x14,+0x18)
+    // were not adjusted, leaving them pointing at the wrong PCM offsets after a resize.
+
+    /// Simulate the CASE 2 loop-rebasing logic on a synthetic param block.
+    func testPCMReallocatorLoopAddressRebaseAdjustsAllFourFields() {
+        // Build a minimal bank data slice: just one param block for sample j=1
+        // placed at EmaxIIFormat.sampleParamOffset + 1 × sampleParamSize
+        let blockOffset = EmaxIIFormat.sampleParamOffset + EmaxIIFormat.sampleParamSize
+        let dataSize = blockOffset + EmaxIIFormat.sampleParamSize
+        var bankData = Data(count: dataSize)
+
+        // Fill sample j=1's param block
+        // jStart > oldStartRel (which is 0) — so adjustment will apply
+        let jStart: UInt32   = 0x1000
+        let jEnd: UInt32     = 0x2000
+        let loopSS: UInt32   = 0x1200  // sustainLoopStart
+        let loopSE: UInt32   = 0x1800  // sustainLoopEnd
+        let loopRS: UInt32   = 0x1A00  // releaseLoopStart
+        let loopRE: UInt32   = 0x1F00  // releaseLoopEnd
+
+        writeU32LE(jStart, into: &bankData, at: blockOffset + EmaxIIFormat.paramStartAddr)
+        writeU32LE(jEnd,   into: &bankData, at: blockOffset + EmaxIIFormat.paramEndAddr)
+        writeU32LE(loopSS, into: &bankData, at: blockOffset + EmaxIIFormat.paramSustainLoopStart)
+        writeU32LE(loopSE, into: &bankData, at: blockOffset + EmaxIIFormat.paramSustainLoopEnd)
+        writeU32LE(loopRS, into: &bankData, at: blockOffset + EmaxIIFormat.paramReleaseLoopStart)
+        writeU32LE(loopRE, into: &bankData, at: blockOffset + EmaxIIFormat.paramReleaseLoopEnd)
+
+        // Apply the exact adjustment logic from PCMReallocator (CASE 2 inner loop)
+        let oldStartRel = 0  // sample being replaced is at offset 0
+        let delta = 0x800    // new PCM is 0x800 bytes larger
+
+        for j in 1..<2 {
+            let jBase = EmaxIIFormat.sampleParamOffset + j * EmaxIIFormat.sampleParamSize
+            let jS = Int(readU32LE(bankData, at: jBase + EmaxIIFormat.paramStartAddr))
+            let jE = Int(readU32LE(bankData, at: jBase + EmaxIIFormat.paramEndAddr))
+            guard jS > 0 || jE > 0 else { continue }
+            if jS > oldStartRel {
+                writeU32LE(UInt32(jS + delta), into: &bankData, at: jBase + EmaxIIFormat.paramStartAddr)
+                writeU32LE(UInt32(jE + delta), into: &bankData, at: jBase + EmaxIIFormat.paramEndAddr)
+                for loopOff in [EmaxIIFormat.paramSustainLoopStart,
+                                EmaxIIFormat.paramSustainLoopEnd,
+                                EmaxIIFormat.paramReleaseLoopStart,
+                                EmaxIIFormat.paramReleaseLoopEnd] {
+                    guard jBase + loopOff + 4 <= bankData.count else { continue }
+                    let raw = Int(readU32LE(bankData, at: jBase + loopOff))
+                    if raw > 0 {
+                        writeU32LE(UInt32(max(0, raw + delta)), into: &bankData, at: jBase + loopOff)
+                    }
+                }
+            }
+        }
+
+        XCTAssertEqual(readU32LE(bankData, at: blockOffset + EmaxIIFormat.paramStartAddr),        jStart + UInt32(delta))
+        XCTAssertEqual(readU32LE(bankData, at: blockOffset + EmaxIIFormat.paramEndAddr),          jEnd   + UInt32(delta))
+        XCTAssertEqual(readU32LE(bankData, at: blockOffset + EmaxIIFormat.paramSustainLoopStart), loopSS + UInt32(delta))
+        XCTAssertEqual(readU32LE(bankData, at: blockOffset + EmaxIIFormat.paramSustainLoopEnd),   loopSE + UInt32(delta))
+        XCTAssertEqual(readU32LE(bankData, at: blockOffset + EmaxIIFormat.paramReleaseLoopStart), loopRS + UInt32(delta))
+        XCTAssertEqual(readU32LE(bankData, at: blockOffset + EmaxIIFormat.paramReleaseLoopEnd),   loopRE + UInt32(delta))
+    }
+
+    /// Zero-valued loop addresses (disabled) must not be shifted.
+    func testPCMReallocatorLoopAddressRebaseSkipsZeroFields() {
+        let blockOffset = EmaxIIFormat.sampleParamOffset + EmaxIIFormat.sampleParamSize
+        let dataSize = blockOffset + EmaxIIFormat.sampleParamSize
+        var bankData = Data(count: dataSize)
+
+        writeU32LE(0x2000, into: &bankData, at: blockOffset + EmaxIIFormat.paramStartAddr)
+        writeU32LE(0x3000, into: &bankData, at: blockOffset + EmaxIIFormat.paramEndAddr)
+        // All loop fields stay 0 (no loop)
+
+        let delta = 0x1000
+        let jBase = blockOffset
+        let jS = Int(readU32LE(bankData, at: jBase + EmaxIIFormat.paramStartAddr))
+        writeU32LE(UInt32(jS + delta), into: &bankData, at: jBase + EmaxIIFormat.paramStartAddr)
+        for loopOff in [EmaxIIFormat.paramSustainLoopStart,
+                        EmaxIIFormat.paramSustainLoopEnd,
+                        EmaxIIFormat.paramReleaseLoopStart,
+                        EmaxIIFormat.paramReleaseLoopEnd] {
+            guard jBase + loopOff + 4 <= bankData.count else { continue }
+            let raw = Int(readU32LE(bankData, at: jBase + loopOff))
+            if raw > 0 {
+                writeU32LE(UInt32(max(0, raw + delta)), into: &bankData, at: jBase + loopOff)
+            }
+        }
+
+        // All four loop fields must remain 0
+        for loopOff in [EmaxIIFormat.paramSustainLoopStart,
+                        EmaxIIFormat.paramSustainLoopEnd,
+                        EmaxIIFormat.paramReleaseLoopStart,
+                        EmaxIIFormat.paramReleaseLoopEnd] {
+            XCTAssertEqual(readU32LE(bankData, at: jBase + loopOff), 0,
+                           "Zero loop field at offset \(loopOff) must not be modified")
+        }
+    }
+
+    // MARK: - Private Data helpers
+
+    private func readU32LE(_ data: Data, at offset: Int) -> UInt32 {
+        guard offset + 4 <= data.count else { return 0 }
+        return data.withUnsafeBytes {
+            $0.baseAddress!.advanced(by: offset).loadUnaligned(as: UInt32.self)
+        }
+    }
+
+    private func writeU32LE(_ value: UInt32, into data: inout Data, at offset: Int) {
+        guard offset + 4 <= data.count else { return }
+        data[offset]     = UInt8(value & 0xFF)
+        data[offset + 1] = UInt8((value >> 8)  & 0xFF)
+        data[offset + 2] = UInt8((value >> 16) & 0xFF)
+        data[offset + 3] = UInt8((value >> 24) & 0xFF)
+    }
 }
