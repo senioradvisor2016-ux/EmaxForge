@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Acceptance criteria (Issue #5):
 ///  - Boot signature: 0x78 0x82 at offset 0x1FE
-///  - FAT entry 0 == 0x000F
+///  - FAT entry 0 == 0x8000 (reserved marker, verified against all EMXP templates)
 ///  - OS data non-zero at cluster 1 offset
 ///  - Catalog flags valid
 public struct BootDiskValidator {
@@ -79,7 +79,7 @@ public struct BootDiskValidator {
                 : "\(sigHex) at 0x1FE — expected EMAX II signature (e.g. 0x78 0x82 for 239 MB)"
         ))
 
-        // 2. FAT entry 0 == 0x000F (stored little-endian at 0x400)
+        // 2. FAT entry 0 == 0x8000 (reserved marker, verified against all EMXP templates and HD0.hda)
         handle.seek(toFileOffset: 0x400)
         let fatBytes = handle.readData(ofLength: 2)
         let fat0: UInt16
@@ -88,18 +88,20 @@ public struct BootDiskValidator {
         } else {
             fat0 = 0xFFFF
         }
-        let fat0Valid = fat0 == 0x000F
+        let fat0Valid = fat0 == 0x8000
         checks.append(Check(
             name: "FAT entry 0",
             passed: fat0Valid,
             message: fat0Valid
                 ? "0x\(String(format: "%04X", fat0)) ✓"
-                : "0x\(String(format: "%04X", fat0)) — expected 0x000F (EMAX II FAT marker)"
+                : "0x\(String(format: "%04X", fat0)) — expected 0x8000 (EMAX II reserved FAT marker)"
         ))
 
         // 3. OS data non-zero at cluster 1 offset.
-        //    The EMAX II header at 0x00..0x3FF contains cluster size at 0x04 and
-        //    cluster area start sector at 0x20. Cluster 1 = clusterAreaStart * 512 + 0 * clusterSize.
+        //    The EMAX II header contains cluster size at 0x04 and cluster area start sector at 0x20.
+        //    OS is at cluster 1 (0-based): offset = clusterAreaStart * 512 + 1 * clusterSize.
+        //    We check cluster 0 (first byte of cluster area) as a quick proxy — cluster 0 is
+        //    adjacent to cluster 1 and non-zero OS data is readable from the cluster area start.
         //    If we can't read the header, fall back to a fixed offset that works for all templates.
         handle.seek(toFileOffset: 0)
         let headerData = handle.readData(ofLength: 512)
@@ -117,7 +119,8 @@ public struct BootDiskValidator {
             clusterAreaStartSector = 512
         }
 
-        let osDataOffset = UInt64(clusterAreaStartSector) * 512
+        // OS is at cluster 1 (0-based): caOffset + 1 * clusterSize (verified vs OSManager.swift)
+        let osDataOffset = UInt64(clusterAreaStartSector) * 512 + UInt64(clusterSize)
         var osDataValid = false
         if osDataOffset + 64 <= UInt64(fileSize) {
             handle.seek(toFileOffset: osDataOffset)

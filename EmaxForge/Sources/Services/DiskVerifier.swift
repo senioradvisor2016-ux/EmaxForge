@@ -226,13 +226,14 @@ class DiskVerifier {
         checks.append(Check(name: "Cluster area bounds", passed: boundsOK, detail: "Clusters end at 0x\(String(expectedEnd, radix: 16, uppercase: true)), file=0x\(String(fileSize, radix: 16, uppercase: true))"))
         
         // === OS data present (if OS entry exists) ===
+        // OS is at cluster 1 (0-based): clusterAreaOffset + 1 * clusterSize (verified vs OSManager.swift)
         if osFound {
-            let osDataOffset = UInt64(clusterAreaOffset)  // cluster 1 (1-based: offset + (1-1)*cs = offset)
+            let osDataOffset = UInt64(clusterAreaOffset) + UInt64(clusterSize)
             if osDataOffset + 16 <= UInt64(fileSize) {
                 handle.seek(toFileOffset: osDataOffset)
                 let osSnippet = handle.readData(ofLength: 16)
                 let hasData = osSnippet.contains(where: { $0 != 0 })
-                checks.append(Check(name: "OS data present", passed: hasData, detail: hasData ? "Non-zero at cluster 1" : "⚠️ Cluster 1 is all zeros — OS may not boot"))
+                checks.append(Check(name: "OS data present", passed: hasData, detail: hasData ? "Non-zero at cluster 1 (0-based)" : "⚠️ Cluster 1 is all zeros — OS may not boot"))
             }
         }
         

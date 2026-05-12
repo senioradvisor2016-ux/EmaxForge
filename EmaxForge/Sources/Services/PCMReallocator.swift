@@ -18,9 +18,9 @@ import Foundation
 ///     +0x20 name        (16 bytes, NUL-terminated)
 ///     +0x30 outputChannel (U8)
 ///
-/// FAT-kluster: N (1-based) → caOffset + (N-1)×clusterSize
+/// FAT-kluster: N (0-based) → caOffset + N×clusterSize  (verified vs EmaxIIFileSystem.swift)
 /// FAT alltid på 0x400.
-/// End-of-chain marker: 0x8080 (verifierad mot EMXP)
+/// End-of-chain marker: 0x7FFF (EMAX II hardware standard; 0x8080 = compat EOC, handled in readers)
 class PCMReallocator {
 
     struct ReplacementResult {
@@ -67,9 +67,9 @@ class PCMReallocator {
         var clusterAreaOffset: UInt64 { UInt64(clusterAreaStartSector) * 512 }
         var bntOffset: UInt64 { UInt64(bntStartSector) * 512 }
 
-        /// 1-based cluster → byte offset in image
+        /// 0-based cluster → byte offset in image  (verified vs EmaxIIFileSystem.swift)
         func clusterOffset(_ cluster: Int) -> UInt64 {
-            clusterAreaOffset + UInt64(cluster - 1) * UInt64(clusterSize)
+            clusterAreaOffset + UInt64(cluster) * UInt64(clusterSize)
         }
     }
 
@@ -83,11 +83,20 @@ class PCMReallocator {
             throw ReplacementError.readError("Not an EMX2 image")
         }
 
-        let diskSizeSectors    = Int(fileSize / 512)
-        let caStartSector      = Int(header.readU32LE(at: 0x20))
-        let totalClusters      = Int(header.readU32LE(at: 0x24))
-        let sectorsPerCluster  = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
-        let clusterSize        = sectorsPerCluster * 512
+        let caStartSector   = Int(header.readU32LE(at: 0x20))
+        let totalClusters   = Int(header.readU32LE(at: 0x24))
+
+        // Prefer header[0x04] for clusterSize (original EMAX II hardware disks store it directly).
+        // Fall back to geometry computation for EMXP-created disks (header[0x04] may be 0 or wrong).
+        let headerCS = Int(header.readU32LE(at: 0x04))
+        let clusterSize: Int
+        if headerCS > 0 && headerCS % 512 == 0 && headerCS <= 4_194_304 {
+            clusterSize = headerCS
+        } else {
+            let diskSizeSectors   = Int(fileSize / 512)
+            let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
+            clusterSize = sectorsPerCluster * 512
+        }
 
         return DiskGeometry(
             clusterSize:            clusterSize,
@@ -185,9 +194,9 @@ class PCMReallocator {
         catalogIndex: Int,
         newCount: UInt16
     ) {
-        // BNT entry: 32 bytes, slot 0 = OS. +0x14 = clusterCount (UInt16 LE)
+        // BNT entry layout: +0x10=startCluster, +0x12=clusterCount, +0x14=numPresets (verified)
         let entryOffset = geo.bntOffset + UInt64(catalogIndex * 32)
-        handle.seek(toFileOffset: entryOffset + 20)   // +0x14
+        handle.seek(toFileOffset: entryOffset + 18)   // +0x12 = clusterCount (NOT +0x14 which is numPresets)
         var countLE = newCount.littleEndian
         handle.write(Data(bytes: &countLE, count: 2))
     }
@@ -366,7 +375,7 @@ class PCMReallocator {
             for k in 0..<freeList.count {
                 fat[freeList[k]] = k < freeList.count - 1
                     ? UInt16(freeList[k + 1])
-                    : 0x8080   // end-of-chain
+                    : 0x7FFF   // end-of-chain (EMAX II hardware standard)
             }
             newChain = currentChain + freeList
             clustersAdded = freeList.count
@@ -377,7 +386,7 @@ class PCMReallocator {
             let freeChain  = Array(currentChain.dropFirst(clustersNeeded))
 
             // Sätt ny end-of-chain på sista behållna klustret
-            fat[keepChain.last!] = 0x8080
+            fat[keepChain.last!] = 0x7FFF   // end-of-chain (EMAX II hardware standard)
             // Frisätt övriga
             for cluster in freeChain {
                 fat[cluster] = 0x0000
