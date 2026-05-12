@@ -301,6 +301,120 @@ class SampleExporter {
         try writePCMToFile(pcmData: pcmData, sampleRate: sampleRate, to: url, format: format)
     }
 
+    // MARK: - Stereo file creation (EMXP: "Create a STEREO file from the...")
+
+    /// Interleave two mono 16-bit LE PCM buffers into a stereo PCM buffer.
+    ///
+    /// The EMAX II hardware produces mono samples. This function combines a left-channel and
+    /// right-channel sample into a single interleaved stereo buffer: L₀ R₀ L₁ R₁ …
+    /// If the buffers differ in length the shorter one is zero-padded.
+    ///
+    /// - Parameters:
+    ///   - leftPCM:  Raw 16-bit LE mono PCM (left channel)
+    ///   - rightPCM: Raw 16-bit LE mono PCM (right channel)
+    /// - Returns: Interleaved stereo PCM (2 × max(len(L), len(R)) bytes)
+    static func interleaveToStereo(leftPCM: Data, rightPCM: Data) -> Data {
+        let leftFrames  = leftPCM.count  / 2
+        let rightFrames = rightPCM.count / 2
+        let frameCount  = max(leftFrames, rightFrames)
+        var result = Data(count: frameCount * 4)  // 2 channels × 2 bytes
+
+        result.withUnsafeMutableBytes { dst in
+            let dstPtr = dst.bindMemory(to: UInt16.self)
+            leftPCM.withUnsafeBytes { lSrc in
+                let lPtr = lSrc.bindMemory(to: UInt16.self)
+                rightPCM.withUnsafeBytes { rSrc in
+                    let rPtr = rSrc.bindMemory(to: UInt16.self)
+                    for i in 0..<frameCount {
+                        dstPtr[i * 2]     = i < leftFrames  ? lPtr[i] : 0
+                        dstPtr[i * 2 + 1] = i < rightFrames ? rPtr[i] : 0
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    /// Create a stereo WAV or AIFF file by merging two mono samples.
+    ///
+    /// Matches EMXP's "Create a STEREO file from the…" feature. Both samples should
+    /// share the same sample rate; if they differ, `leftSampleRate` is used and the
+    /// caller is responsible for rate-matching beforehand.
+    ///
+    /// - Parameters:
+    ///   - leftPCM:        Mono 16-bit LE PCM for the left channel
+    ///   - rightPCM:       Mono 16-bit LE PCM for the right channel
+    ///   - leftSampleRate: Sample rate of the left channel (used for the output file)
+    ///   - outputURL:      Destination file URL
+    ///   - format:         Output format (.wav / .aiff)
+    static func createStereoFile(
+        leftPCM: Data,
+        rightPCM: Data,
+        sampleRate: Double,
+        to outputURL: URL,
+        format: ExportFormat = .wav
+    ) throws {
+        guard !leftPCM.isEmpty || !rightPCM.isEmpty else { throw ExportError.noSampleData }
+        let stereoPCM = interleaveToStereo(leftPCM: leftPCM, rightPCM: rightPCM)
+        try writeStereoToFile(pcmData: stereoPCM, sampleRate: sampleRate, to: outputURL, format: format)
+    }
+
+    /// Write interleaved stereo 16-bit LE PCM to a WAV or AIFF file.
+    private static func writeStereoToFile(
+        pcmData: Data,
+        sampleRate: Double,
+        to url: URL,
+        format: ExportFormat
+    ) throws {
+        let frameCount = pcmData.count / 4  // 2 channels × 2 bytes per channel
+        guard frameCount > 0 else { throw ExportError.noSampleData }
+
+        var asbd = AudioStreamBasicDescription(
+            mSampleRate: sampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: format == .wav
+                ? (kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked)
+                : (kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked | kAudioFormatFlagIsBigEndian),
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 16,
+            mReserved: 0
+        )
+
+        var audioFile: AudioFileID?
+        let createStatus = AudioFileCreateWithURL(url as CFURL, format.fileType, &asbd, .eraseFile, &audioFile)
+        guard createStatus == noErr, let file = audioFile else { throw ExportError.createFileFailed }
+        defer { AudioFileClose(file) }
+
+        let writeData: Data
+        if format == .aiff {
+            // AIFF: byte-swap each 16-bit word
+            var beData = Data(count: pcmData.count)
+            pcmData.withUnsafeBytes { src in
+                beData.withUnsafeMutableBytes { dst in
+                    let s = src.bindMemory(to: UInt8.self)
+                    let d = dst.bindMemory(to: UInt8.self)
+                    for i in stride(from: 0, to: pcmData.count - 1, by: 2) {
+                        d[i] = s[i + 1]; d[i + 1] = s[i]
+                    }
+                }
+            }
+            writeData = beData
+        } else {
+            writeData = pcmData  // WAV is already LE
+        }
+
+        var numBytes = UInt32(writeData.count)
+        let writeStatus = writeData.withUnsafeBytes { rawBuf in
+            AudioFileWriteBytes(file, false, 0, &numBytes, rawBuf.baseAddress!)
+        }
+        guard writeStatus == noErr else {
+            throw ExportError.writeFailed("AudioFileWriteBytes failed: \(writeStatus)")
+        }
+    }
+
     // MARK: - Helpers
 
     /// Normalize PCM data to use full dynamic range
