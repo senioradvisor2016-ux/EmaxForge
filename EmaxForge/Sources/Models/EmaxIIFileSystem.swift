@@ -7,11 +7,11 @@ struct EmaxIIFileSystem {
     let magic: String           // "EMX2"
     let clusterSize: Int
     let clusterAreaStartSector: UInt32  // Physical sector where cluster area begins (98-163, varies by disk size)
-    let fat: [UInt16]           // 512 entries
+    let fat: [UInt16]           // entries = fatSectors * 256 (varies by disk size)
     let banks: [BankCatalogEntry]
     let imageSize: Int
-    
-    var maxClusters: Int { 512 }
+
+    var maxClusters: Int { fat.count }
     /// Clusters in use = non-free, non-reserved entries in the FAT.
     /// Includes EOC markers (0x7FFF, 0x8080) since they occupy real cluster space.
     /// Excludes FAT[0] reserved marker (0x8000) and free entries (0x0000).

@@ -39,9 +39,19 @@ private enum FATAnalyzer {
                           userInfo: [NSLocalizedDescriptionKey: "File too small to be a valid disk image"])
         }
 
-        // FAT ALWAYS at 0x400 (sector 2) for EMAX II — verified against all EMXP templates
+        // FAT ALWAYS at 0x400 (sector 2) for EMAX II — verified against all EMXP templates.
+        // Entry count = fatSectors (header[0x1C]) × 256 — varies by disk size.
+        // Fall back to 512 entries (1 sector) if header is unreadable.
         let fatOffset = 0x400
-        let fatEntryCount = 512
+        let fatSectors: Int = {
+            guard data.count >= 0x20 else { return 1 }
+            let v = data.withUnsafeBytes { ptr -> UInt32 in
+                ptr.loadUnaligned(fromByteOffset: 0x1C, as: UInt32.self)
+            }
+            let s = Int(v)
+            return s > 0 && s <= 32 ? s : 1
+        }()
+        let fatEntryCount = fatSectors * 256  // 512 bytes/sector ÷ 2 bytes/entry = 256 entries/sector
         var fat = [UInt16]()
         fat.reserveCapacity(fatEntryCount)
 
@@ -64,6 +74,12 @@ private enum FATAnalyzer {
         var errors = [String]()
         var warnings = [String]()
 
+        // EMAX II end-of-chain markers (verified against all EMXP templates and HD0.hda)
+        //   0x7FFF = standard EOC
+        //   0x8080 = compat EOC (written by old BankImporter)
+        //   0x8000 = reserved (FAT[0] only)
+        func isEOC(_ v: UInt16) -> Bool { v == 0x7FFF || v == 0x8080 }
+
         // Detect broken chains
         var visited = Set<Int>()
         func followChain(_ start: Int) -> Bool {
@@ -72,10 +88,11 @@ private enum FATAnalyzer {
             while cur < fat.count && steps < fat.count {
                 if visited.contains(cur) { return false } // loop
                 visited.insert(cur)
-                let next = Int(fat[cur])
-                if next == 0x0000 { return true } // end (free?)
-                if next == 0xFFFF || next == 0x0001 { return true } // end-of-chain
-                if next >= fat.count { return false } // out of range
+                let val = fat[cur]
+                if isEOC(val) { return true }            // valid end-of-chain
+                let next = Int(val)
+                if next == 0x0000 { return false }        // free cluster mid-chain = broken
+                if next >= fat.count { return false }     // out of range
                 cur = next
                 steps += 1
             }
@@ -87,9 +104,9 @@ private enum FATAnalyzer {
             if val == 0x0000 {
                 freeClusters += 1
                 clusterStates.append(.free)
-            } else if val == 0xFFFF || val == 0x0001 {
+            } else if isEOC(val) || val == 0x8000 {
                 usedClusters += 1
-                clusterStates.append(.used)
+                clusterStates.append(val == 0x8000 ? .reserved : .used)
             } else if val >= UInt16(fat.count) {
                 errors.append("Cluster \(i): invalid FAT entry 0x\(String(val, radix: 16, uppercase: true))")
                 clusterStates.append(.error)
