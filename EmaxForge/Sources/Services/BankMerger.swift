@@ -390,11 +390,11 @@ class BankMerger {
             if let lastExisting = finalClusterChain.last {
                 fat[lastExisting] = UInt16(newClusters[0])
             }
-            // Chain new clusters together, end with 0x8080
+            // Chain new clusters together, end with 0x7FFF (EMAX II hardware EOC standard)
             for i in 0..<newClusters.count {
                 fat[newClusters[i]] = i < newClusters.count - 1
                     ? UInt16(newClusters[i + 1])
-                    : 0x8080
+                    : 0x7FFF  // end-of-chain (EMAX II hardware standard; readers also accept 0x8080 compat EOC)
             }
 
             finalClusterChain.append(contentsOf: newClusters)
