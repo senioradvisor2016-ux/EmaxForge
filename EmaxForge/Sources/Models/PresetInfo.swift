@@ -56,7 +56,7 @@ struct PresetAnalyzer {
         var totalVoices = 0
         
         // Process each bank
-        for bank in fs.banks where bank.startCluster != 1 { // Skip OS
+        for bank in fs.banks where bank.startCluster != 0x7800 { // Skip OS (OS uses 0x7800 marker)
             if let bankPresets = try? extractPresetsFromBank(bank, fs: fs, imageURL: imageURL) {
                 allPresets.append(contentsOf: bankPresets)
                 totalVoices += bankPresets.reduce(0) { $0 + $1.voiceCount }
