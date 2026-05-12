@@ -149,7 +149,7 @@ struct ImageDetailView: View {
             PresetBrowserView(image: image)
         }
         .sheet(isPresented: $showAdvancedImport) {
-            AdvancedImportSheet()
+            AdvancedImportSheet(imageURL: image.url)
         }
         .sheet(isPresented: $showCatalogBrowser) {
             CatalogBrowserView(image: image)

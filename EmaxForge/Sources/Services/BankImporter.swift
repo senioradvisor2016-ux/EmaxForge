@@ -8,23 +8,22 @@ import Foundation
 ///   BNT:     sector header[0x10]*512, 32-byte entries, max header[0x14] banks
 ///   Clusters: sector header[0x20]*512, size computed from (diskSectors-caSector)/totalClusters
 ///
-/// BNT entry layout (32 bytes) — VERIFIED byte-for-byte against EmaxII-02.ez2:
-///   [0-13]:  name, ASCII space-padded to 14 chars
-///   [14-15]: 0x00 0x00 (null padding)
-///   [16-17]: idx (bank preset address, 0x0000 for bank 1, varies; set to 0 on import)
-///   [18-19]: start cluster (LE, 0-based cluster number in cluster area)
-///   [20-21]: cluster count (must match FAT chain length)
+/// BNT entry layout (32 bytes) — verified against EmaxIIFileSystem.swift and EmaxII-02.ez2:
+///   [0-15]:  name, ASCII space/null padded to 16 bytes
+///   [16-17]: startCluster (U16 LE, 0-based cluster index; 0x7800 = OS special marker)
+///   [18-19]: clusterCount (U16 LE, must match FAT chain length)
+///   [20-21]: numPresets (U16 LE; set to 0 on import — written by EMAX II at load time)
 ///   [22-23]: f22 (unknown EMAX II metadata; range 0-127; set to 0 on import — verified safe)
-///   [24-25]: f24 (unknown EMAX II metadata; range 0-508; set to 0 on import — verified safe)
+///   [24-25]: bankIndex (idx, preset address; set to 0 on import — verified safe)
 ///   [26-27]: flags = 0x0081 (ALWAYS)
 ///   [28-31]: zeros
 ///
-/// NOTE: f22/f24 are preserved when reading disks but written as 0x0000 on import.
+/// NOTE: f22/bankIndex are preserved when reading disks but written as 0x0000 on import.
 /// Analysis (Mar 21 2026) shows no correlation to bank size, cluster count, or preset count.
 /// Current hypothesis: EMAX II runtime metadata (caching hints) or EMXP-specific fields.
-/// EmaxForge-created disks with f22=f24=0 work correctly — fields are not critical for boot/load.
+/// EmaxForge-created disks with f22=bankIndex=0 work correctly — fields are not critical for boot/load.
 ///
-/// Cluster offset formula: ca_off + cluster * clusterSize  (0-based)
+/// Cluster offset formula: ca_off + cluster * clusterSize  (0-based, verified vs EmaxIIFileSystem.swift)
 class BankImporter {
 
     enum ImportError: LocalizedError {
@@ -33,6 +32,7 @@ class BankImporter {
         case noFreeSpace(needed: Int, available: Int)
         case bankTooSmall
         case noFreeBNTSlot
+        case duplicateBankName(String)
         case writeError(String)
         case unsupportedFormat(String)
 
@@ -44,6 +44,7 @@ class BankImporter {
                 return "Not enough space: need \(needed) cluster(s), only \(available) free"
             case .bankTooSmall:   return "Bank file is too small to be valid"
             case .noFreeBNTSlot:  return "No free bank slot (BNT full)"
+            case .duplicateBankName(let name): return "Bank '\(name)' already exists in this image (use allowDuplicate to override)"
             case .writeError(let msg): return "Write error: \(msg)"
             case .unsupportedFormat(let msg): return "Unsupported format: \(msg)"
             }
@@ -73,14 +74,12 @@ class BankImporter {
         var bntOffset: UInt64 { UInt64(bntStartSector) * 512 }
         var clusterAreaOffset: UInt64 { UInt64(clusterAreaStartSector) * 512 }
 
-        /// cluster → byte offset in image (1-based: cluster 1 = start of cluster area)
-        /// Verified against EMXP emxp_base.hda (Mar 22 2026):
-        ///   cluster 1 → ca (OS data)
-        ///   cluster 2 → ca + 1*cs (first bank)
-        ///   cluster 3 → ca + 2*cs (second bank or overflow)
-        /// Formula: ca + (cluster - 1) * cs
+        /// cluster → byte offset in image (0-based, verified vs EmaxIIFileSystem.swift):
+        ///   cluster 0 → ca_off               (e.g. STEEL DRUMS on HD0.hda)
+        ///   cluster 1 → ca_off + 1*cs
+        ///   cluster n → ca_off + n*cs
         func clusterOffset(_ cluster: Int) -> UInt64 {
-            clusterAreaOffset + UInt64(cluster - 1) * UInt64(clusterSize)
+            clusterAreaOffset + UInt64(cluster) * UInt64(clusterSize)
         }
     }
 
@@ -91,15 +90,20 @@ class BankImporter {
             throw ImportError.notEmaxImage
         }
 
-        // clusterSize is NOT in header (0x04 = disk size in sectors).
-        // Computed: (diskSizeSectors - caStartSector) / totalClusters * 512
-        // Verified: EmaxII-02.ez2 = 64 KB/cluster, 239 MB = 256 KB/cluster
-        let diskSizeSectors = Int(fileSize / 512)
+        // clusterSize: prefer header[0x04] when it is a valid multiple of 512 and ≤ 4 MB
+        // (original EMAX II hardware disks, e.g. HD0.hda store clusterSize directly at 0x04).
+        // Fall back to geometry computation for EMXP-created disks where 0x04 holds disk size in sectors.
         let caStartSector = Int(header.readU32LE(at: 0x20))
         let totalClusters = Int(header.readU32LE(at: 0x24))
-        
-        let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
-        let clusterSize = sectorsPerCluster * 512
+        let headerClusterSize = Int(header.readU32LE(at: 0x04))
+        let clusterSize: Int
+        if headerClusterSize > 0 && headerClusterSize % 512 == 0 && headerClusterSize <= 4_194_304 {
+            clusterSize = headerClusterSize
+        } else {
+            let diskSizeSectors = Int(fileSize / 512)
+            let sectorsPerCluster = totalClusters > 0 ? (diskSizeSectors - caStartSector) / totalClusters : 128
+            clusterSize = sectorsPerCluster * 512
+        }
 
         return DiskGeometry(
             clusterSize:            clusterSize,
@@ -147,21 +151,41 @@ class BankImporter {
             fat.append(fatData.readU16LE(at: i))
         }
 
+        // --- Duplicate name check (before any allocation) ---
+        // Read BNT early so we can reject duplicates without side effects.
+        let bntTotalSizeEarly = Int(geo.clusterAreaStartSector - geo.bntStartSector) * 512
+        handle.seek(toFileOffset: geo.bntOffset)
+        let bntEarlyData = handle.readData(ofLength: bntTotalSizeEarly)
+        let maxSlotsEarly = min(geo.maxBanks + 1, bntTotalSizeEarly / 32)
+        for i in 1..<maxSlotsEarly {
+            let start = i * 32, end = start + 32
+            guard end <= bntEarlyData.count else { break }
+            // Use subdata(in:) to get a properly re-indexed copy (Data slice indices are absolute).
+            let entry = bntEarlyData.subdata(in: start..<end)
+            guard !entry.allSatisfy({ $0 == 0x00 }) else { continue }
+            let existingName = String(data: entry[0..<16], encoding: .ascii)?
+                .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
+            if existingName == bankName && !allowDuplicate {
+                throw ImportError.duplicateBankName(bankName)
+            }
+        }
+
         // Calculate clusters needed
         let clustersNeeded = (bankData.count + geo.clusterSize - 1) / geo.clusterSize
 
-        // Determine used clusters by scanning FAT for non-free entries
-        // Free = 0x0000, Used = anything else (0x7FFF, 0x8080, 0x8000, or next cluster index)
-        var usedClusters = Set<Int>([0])  // cluster 0 always reserved
-        for i in 1..<fat.count {
+        // Determine used clusters by scanning FAT for non-free entries.
+        // Free = 0x0000, Used = anything else (0x7FFF, 0x8080, 0x8000, or next cluster index).
+        // Scan from index 0 — cluster 0 may be used (e.g. STEEL DRUMS on HD0.hda).
+        var usedClusters = Set<Int>()
+        for i in 0..<fat.count {
             if fat[i] != 0x0000 {
                 usedClusters.insert(i)
             }
         }
 
-        // Find free clusters (skip reserved and used)
+        // Find free clusters (0-based, skip any that are in-use per FAT)
         var freeClusters = [Int]()
-        for i in 1..<min(fat.count, geo.totalClusters + 2) {
+        for i in 0..<min(fat.count, geo.totalClusters + 1) {
             if !usedClusters.contains(i) {
                 freeClusters.append(i)
                 if freeClusters.count >= clustersNeeded { break }
@@ -169,14 +193,14 @@ class BankImporter {
         }
 
         guard freeClusters.count >= clustersNeeded else {
-            let totalFree = (2..<min(fat.count, geo.totalClusters + 2))
+            let totalFree = (0..<min(fat.count, geo.totalClusters + 1))
                 .filter { fat[$0] == 0x0000 }.count
             throw ImportError.noFreeSpace(needed: clustersNeeded, available: totalFree)
         }
 
         let allocated = Array(freeClusters.prefix(clustersNeeded))
 
-        // Write bank data to clusters (1-based: cluster n → ca_off + (n-1)*cs)
+        // Write bank data to clusters (0-based: cluster n → ca_off + n*cs)
         for (i, cluster) in allocated.enumerated() {
             let dataStart = i * geo.clusterSize
             let dataEnd   = min(dataStart + geo.clusterSize, bankData.count)
@@ -235,30 +259,29 @@ class BankImporter {
         let nameData   = (paddedName + "\0\0").data(using: .ascii) ?? Data(count: 16)
         bntEntry.replaceSubrange(0..<16, with: nameData.prefix(16))
 
-        // BNT entry layout verified byte-for-byte against EmaxII-02.ez2:
-        //   +00..+0D  name, ASCII, space-padded to 14 chars
-        //   +0E..+0F  0x00 0x00  (null padding)
-        //   +10..+11  idx — preset address table offset (0x0000 for bank 1, varies per content)
-        //   +12..+13  start cluster (first cluster of bank data, 0-based)
-        //   +14..+15  cluster count (number of clusters in FAT chain)
-        //   +16..+17  f22 (varies, set to 0 on import)
-        //   +18..+19  f24 (varies, set to 0 on import)
+        // BNT entry layout (verified vs EmaxIIFileSystem.swift and reference disk EmaxII-02.ez2):
+        //   +00..+0F  name, ASCII, space/null padded to 16 bytes
+        //   +10..+11  startCluster (U16 LE, 0-based cluster index)
+        //   +12..+13  clusterCount (U16 LE, must match FAT chain length)
+        //   +14..+15  numPresets   (U16 LE, set to 0 — EMAX II updates at load time)
+        //   +16..+17  f22          (varies, set to 0 on import)
+        //   +18..+19  bankIndex    (idx/preset address, set to 0 on import)
         //   +1A..+1B  flags = 0x0081 (active bank entry, ALWAYS)
         //   +1C..+1F  zeros
 
-        // [16-17]: idx — set to 0 on import (actual value comes from bank preset data)
-        bntEntry.writeU16LE(0x0000, at: 16)
+        // [16-17]: startCluster (0-based cluster index of first bank cluster)
+        bntEntry.writeU16LE(UInt16(allocated[0]), at: 16)
 
-        // [18-19]: start cluster (first cluster of bank data)
-        bntEntry.writeU16LE(UInt16(allocated[0]), at: 18)
+        // [18-19]: clusterCount (must match FAT chain length)
+        bntEntry.writeU16LE(UInt16(allocated.count), at: 18)
 
-        // [20-21]: cluster count (must match FAT chain length)
-        bntEntry.writeU16LE(UInt16(allocated.count), at: 20)
+        // [20-21]: numPresets — set to 0 on import (EMAX II updates this field at load time)
+        bntEntry.writeU16LE(0x0000, at: 20)
 
         // [22-23]: f22 — set to 0 on import
         bntEntry.writeU16LE(0x0000, at: 22)
 
-        // [24-25]: f24 — set to 0 on import
+        // [24-25]: bankIndex — set to 0 on import
         bntEntry.writeU16LE(0x0000, at: 24)
 
         // [26-27]: flags = 0x0081 (active entry, ALWAYS this value)
@@ -323,7 +346,7 @@ class BankImporter {
         }
 
         var freeCount = 0
-        for i in 1..<min(fatArr.count, geo.totalClusters + 2) {
+        for i in 0..<min(fatArr.count, geo.totalClusters + 1) {
             if fatArr[i] == 0x0000 { freeCount += 1 }
         }
 

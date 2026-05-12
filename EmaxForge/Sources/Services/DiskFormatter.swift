@@ -148,9 +148,10 @@ class DiskFormatter {
         // Read OS data if preserving
         var osData: Data?
         if options.keepOS {
-            // Read OS from cluster 1
+            // Read OS from cluster 1 (0-based: caOffset + 1 * clusterSize).
+            // Verified against HD0.hda: FAT[1]=0x7FFF, OS data at caOffset+clusterSize.
             let clusterAreaStart = UInt64(tmpl.clusterAreaStartSector) * 512
-            let osOffset = clusterAreaStart  // cluster 1 (1-based: ca_off + (1-1)*cs = ca_off)
+            let osOffset = clusterAreaStart + UInt64(tmpl.clusterSize)  // cluster 1, 0-based
             handle.seek(toFileOffset: osOffset)
             let data = handle.readData(ofLength: tmpl.clusterSize)
             // Check if non-zero (OS present)
@@ -225,12 +226,18 @@ class DiskFormatter {
         var bnt = Data(count: bntSize)
         
         if osData != nil {
-            // Entry 0: OS
+            // Entry 0: OS — BNT layout per EmaxIIFileSystem.swift (verified May 2026):
+            //   [0-15]:  name (16 bytes)
+            //   [16-17]: startCluster = 0x7800 (OS special marker — not a real cluster number)
+            //   [18-19]: clusterCount = 1 (OS occupies 1 cluster)
+            //   [20-21]: numPresets = 1 (from reference disks)
+            //   [26-27]: flags = 0x0080 (EMXP standard for OS entry)
             let osName = "EMAX2 Software\0\0".data(using: .ascii)!  // 16 bytes
             bnt.replaceSubrange(0..<16, with: osName.prefix(16))
-            bnt.writeU16LE(1, at: 18)      // cluster 1
-            bnt.writeU16LE(1, at: 20)      // presets
-            bnt.writeU16LE(0x0080, at: 26) // flags (EMXP standard)
+            bnt.writeU16LE(0x7800, at: 16) // OS special marker (not a cluster address)
+            bnt.writeU16LE(1, at: 18)      // clusterCount = 1
+            bnt.writeU16LE(1, at: 20)      // numPresets = 1
+            bnt.writeU16LE(0x0080, at: 26) // flags (EMXP standard for OS)
         }
         
         // Fill unused BNT slots with 0x42 (EMXP convention, slots maxBanks+1 onwards)
@@ -248,10 +255,12 @@ class DiskFormatter {
         handle.seek(toFileOffset: UInt64(tmpl.bntOffset))
         handle.write(bnt)
         
-        // === Write OS data to cluster 1 ===
+        // === Write OS data to cluster 1 (0-based: ca_off + 1 * clusterSize) ===
+        // OS occupies cluster 1 on all EMAX II disks (cluster 0 is reserved/first bank).
+        // Verified against HD0.hda: OS FAT chain starts at FAT[1] = 0x7FFF.
         if let osData = osData {
             let clusterAreaStart = UInt64(tmpl.clusterAreaStartSector) * 512
-            let cluster1Offset = clusterAreaStart  // cluster 1 (1-based: ca_off + (1-1)*cs = ca_off)
+            let cluster1Offset = clusterAreaStart + UInt64(tmpl.clusterSize)  // cluster 1, 0-based
             handle.seek(toFileOffset: cluster1Offset)
             handle.write(osData.prefix(tmpl.clusterSize))
         }

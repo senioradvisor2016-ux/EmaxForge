@@ -250,15 +250,15 @@ class ImageCreator {
         handle.seek(toFileOffset: bntOffset)
         handle.write(cleanBNT)
 
-        // Build clean FAT: reserved + full OS cluster chain + zero for user banks
-        // OS start cluster and count come from the preserved BNT slot 0 entry.
-        // BNT entry layout: [18-19]=start_cluster, [20-21]=cluster_count
-        // Verified against EmaxII-02.ez2: OS uses clusters 1→2→3→4→0x7FFF (4 clusters)
+        // Build clean FAT: reserved + full OS cluster chain + zero for user banks.
+        // BNT slot 0 uses startCluster=0x7800 (OS special marker) at offset 16 — NOT a real cluster.
+        // The OS is always physically at cluster 1 (0-based: caOffset + 1*clusterSize).
+        // osClusterCount from BNT offset 18 (clusterCount field per EmaxIIFileSystem.swift layout).
         var cleanFAT = Data(count: fatSize)
         cleanFAT.writeU16LE(0x8000, at: 0)  // FAT[0] reserved
-        let osStartCluster = Int(cleanBNT.readU16LE(at: 18))
-        let osClusterCount = Int(cleanBNT.readU16LE(at: 20))
-        if osClusterCount > 0 && osStartCluster > 0 {
+        let osStartCluster = 1              // OS always starts at cluster 1
+        let osClusterCount = Int(cleanBNT.readU16LE(at: 18))   // +0x12 = clusterCount
+        if osClusterCount > 0 {
             // Build OS FAT chain: start → start+1 → ... → start+count-1 → 0x7FFF
             for i in 0..<osClusterCount {
                 let cluster = osStartCluster + i
@@ -371,12 +371,11 @@ class ImageCreator {
         handle.seek(toFileOffset: catalogOffset)
         handle.write(bootCatalog)
         
-        // 4. Write OS data at cluster 0 offset
-        // CRITICAL FIX (Mar 16, 2026): OS must be at cluster 0, NOT cluster 1!
-        // Cluster 0 = clusterAreaStart (FAT entry 0 = reserved/OS)
-        // Reference: Funkar/HD10.hda has OS at 0xC400 = 98*512 = cluster 0 offset
+        // 4. Write OS data at cluster 1 (0-based: caOffset + 1 * clusterSize).
+        // Verified against HD0.hda: FAT[0]=0x8000 (reserved), FAT[1]=0x7FFF (OS end-of-chain).
+        // OS physically resides at caOffset + clusterSize (cluster 1, 0-based).
         let clusterAreaStart = UInt64(template.clusterAreaStartSector) * 512
-        let osOffset = clusterAreaStart  // Cluster 0!
+        let osOffset = clusterAreaStart + UInt64(template.clusterSize)  // Cluster 1, 0-based
         let osWriteSize = min(osData.count, Int(template.clusterSize))
         print("📝 Writing OS: offset=0x\(String(osOffset, radix: 16)), size=\(osWriteSize) bytes, first 16 bytes: \(osData.prefix(16).map { String(format: "%02x", $0) }.joined(separator: " "))")
         handle.seek(toFileOffset: osOffset)

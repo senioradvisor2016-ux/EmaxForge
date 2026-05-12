@@ -2,6 +2,10 @@ import SwiftUI
 
 struct AdvancedImportSheet: View {
     @Environment(\.dismiss) private var dismiss
+
+    /// URL of the disk image to receive imported banks (nil = convert-only mode)
+    let imageURL: URL?
+
     @State private var selectedFiles: [URL] = []
     @State private var targetRate = 42000
     @State private var convertToMono = true
@@ -10,8 +14,13 @@ struct AdvancedImportSheet: View {
     @State private var progress: Double = 0.0
     @State private var currentFile = ""
     @State private var errorMessage: String?
-    
+    @State private var importSummary: String?
+
     let audioService = AudioConversionService()
+
+    init(imageURL: URL? = nil) {
+        self.imageURL = imageURL
+    }
     
     var body: some View {
         VStack(spacing: 20) {
@@ -90,6 +99,14 @@ struct AdvancedImportSheet: View {
                 }
             }
             
+            // Import summary
+            if let summary = importSummary {
+                Text(summary)
+                    .foregroundColor(.green)
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+            }
+
             // Error message
             if let error = errorMessage {
                 Text(error)
@@ -109,7 +126,7 @@ struct AdvancedImportSheet: View {
                 
                 Spacer()
                 
-                Button("Convert & Import") {
+                Button(imageURL != nil ? "Convert & Import" : "Convert") {
                     Task {
                         await performConversion()
                     }
@@ -164,11 +181,18 @@ struct AdvancedImportSheet: View {
                 }
             }
             
-            // Success!
+            // Conversion complete. Reveal output folder.
             print("✅ Converted \(results.count) files")
-            
-            // TODO: Auto-import converted files to current disk
-            
+            let outputURLs = results.map { URL(fileURLWithPath: $0.outputPath) }
+            let outDir = outputURLs.first?.deletingLastPathComponent() ?? tempDir
+            DispatchQueue.main.async {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: outDir.path)
+            }
+
+            importSummary = "✅ \(results.count) file(s) converted — use Import Banks to add them to \(imageURL.map { $0.lastPathComponent } ?? "a disk")"
+            isConverting = false
+            // Brief delay so the user sees the summary
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             dismiss()
             
         } catch {

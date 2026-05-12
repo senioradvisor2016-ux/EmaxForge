@@ -258,8 +258,6 @@ class BankMerger {
         //   - Extra preset blocks (already in preset area if slots free)
         //   - Extra sample param entries (at sampleParamOffset + targetSampleCount*64)
         //   - Extra PCM data (appended after current PCM)
-        let newSampleParamEndOffset = Self.sampleParamOffset +
-            (targetSampleCount + samplesToAdd.count) * Self.sampleParamSize
         let newPCMAreaEndOffset = Self.sampleDataOffset + Int(appendOffset) + sourcePCMData.count
         let newTotalSize = max(newPCMAreaEndOffset, targetData.count)
 
@@ -373,7 +371,7 @@ class BankMerger {
             var fat = fatData
 
             // Find free clusters
-            var usedSet = Set(fat.enumerated().compactMap { $1 != 0x0000 ? $0 : nil })
+            let usedSet = Set(fat.enumerated().compactMap { $1 != 0x0000 ? $0 : nil })
             var freeClusters = [Int]()
             for i in 1..<min(fat.count, geo.totalClusters + 2) {
                 if !usedSet.contains(i) {
@@ -415,14 +413,19 @@ class BankMerger {
 
         // --- Write target bank data back ---
         // Build a synthetic entry with the updated cluster chain so BankDataWriter can write it
+        // Build updated entry with the new cluster chain for BankDataWriter.
+        // BNT layout (verified May 2026): +0x10=startCluster, +0x12=clusterCount,
+        //   +0x14=numPresets, +0x16=fieldA(f22), +0x18=bankIndex, +0x1A=flags.
+        // fieldB stores the clusterCount read from +0x12; startCluster from +0x10.
+        // BankDataWriter only uses clusterChain for writing — BNT update is done by updateBNTClusterCount.
         let updatedEntry = BankCatalogEntry(
             catalogIndex: targetEntry.catalogIndex,
             name: targetEntry.name,
-            bankIndex: targetEntry.bankIndex,         // BNT +0x18 idx (preset address)
-            startCluster: targetEntry.startCluster,   // BNT +0x10 bankTag (slot marker)
-            numPresets: UInt16(finalClusterChain.count), // BNT +0x14 cluster count
-            fieldA: targetEntry.fieldA,
-            fieldB: targetEntry.fieldB,               // BNT +0x12 real FAT start cluster
+            bankIndex: targetEntry.bankIndex,          // BNT +0x18
+            startCluster: targetEntry.startCluster,    // BNT +0x10
+            numPresets: targetEntry.numPresets,         // BNT +0x14 (preset count, not cluster count)
+            fieldA: targetEntry.fieldA,                 // BNT +0x16 (f22)
+            fieldB: UInt16(finalClusterChain.count),   // BNT +0x12 (clusterCount) — updated
             flags: targetEntry.flags,
             clusterChain: finalClusterChain,
             sizeBytes: targetData.count
@@ -529,10 +532,11 @@ class BankMerger {
             handle.synchronizeFile()
             handle.closeFile()
         }
-        // BNT entry for catalogIndex is at geo.bntOffset + catalogIndex * 32
-        // clusterCount is at +0x14 (2 bytes, UInt16 LE)
+        // BNT entry for catalogIndex is at geo.bntOffset + catalogIndex * 32.
+        // clusterCount is at +0x12 (BNT layout verified against HD0.hda May 2026):
+        //   +0x10 startCluster, +0x12 clusterCount, +0x14 numPresets
         let entryOffset = geo.bntOffset + UInt64(catalogIndex * 32)
-        handle.seek(toFileOffset: entryOffset + 0x14)
+        handle.seek(toFileOffset: entryOffset + 0x12)
         var countBytes = Data(count: 2)
         bm_writeU16LE(UInt16(newCount), into: &countBytes, at: 0)
         handle.write(countBytes)
