@@ -79,7 +79,14 @@ struct BankExtractor {
             throw ExtractionError.invalidDisk("Not an EMAX II image (missing EMX2)")
         }
 
-        let clusterSize     = Int(headerData.readU32LE(at: 0x04))
+        // Cluster size from header[0x04]. Do NOT require % 512 == 0 — the EMAX II format
+        // stores opaque byte-count values that may not be sector-aligned (e.g. 96 MB → 196352,
+        // % 512 = 256; 962 MB → 1969408, % 512 = 256). Trust if non-zero and ≤ 4 MB.
+        let rawCS = Int(headerData.readU32LE(at: 0x04))
+        guard rawCS > 0 && rawCS <= 4_194_304 else {
+            throw ExtractionError.invalidDisk("Invalid cluster size in header: \(rawCS)")
+        }
+        let clusterSize     = rawCS
         let bntStartSector  = headerData.readU32LE(at: 0x10)
         let maxBanks        = Int(headerData.readU32LE(at: 0x14))
         let fatSectors      = Int(headerData.readU32LE(at: 0x1C))
@@ -88,10 +95,6 @@ struct BankExtractor {
 
         let bntOffset = UInt64(bntStartSector) * 512
         let caOffset  = UInt64(caStartSector) * 512
-
-        guard clusterSize > 0 else {
-            throw ExtractionError.invalidDisk("Invalid cluster size in header")
-        }
 
         // --- Read FAT (always at 0x400) ---
         let fatSize = fatSectors * 512

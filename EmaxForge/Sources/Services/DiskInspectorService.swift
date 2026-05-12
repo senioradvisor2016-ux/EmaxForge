@@ -16,7 +16,7 @@ struct DiskHeaderInfo {
     let magic: String               // "EMX2"
     let imageSize: Int              // File size in bytes
     let diskSizeSectors: Int        // Total sectors computed from file size
-    let clusterSize: Int            // Bytes per cluster (computed, not from header[0x04])
+    let clusterSize: Int            // Bytes per cluster — from header[0x04], geometric fallback if zero
     let totalClusters: Int          // header[0x24]
     let maxBanks: Int               // header[0x14]
     let bntOffset: UInt64           // byte offset of BNT area

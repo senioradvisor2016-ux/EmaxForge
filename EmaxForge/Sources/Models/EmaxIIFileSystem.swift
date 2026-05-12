@@ -260,14 +260,21 @@ enum EmaxIIParser {
         let magic = String(data: header[0..<4], encoding: .ascii) ?? ""
         guard magic == "EMX2" else { throw ParseError.invalidMagic }
         
-        let clusterSize = Int(header.readU32LE(at: 4))
+        // Cluster size from header[0x04]. Do NOT require % 512 == 0 — the EMAX II format
+        // stores opaque byte-count values that may not be sector-aligned (e.g. 96 MB → 196352,
+        // % 512 = 256; 962 MB → 1969408, % 512 = 256). Use if non-zero and ≤ 4 MB.
+        let rawCS = Int(header.readU32LE(at: 4))
+        let clusterSize = rawCS > 0 && rawCS <= 4_194_304 ? rawCS : 0
+        guard clusterSize > 0 else { throw ParseError.readError }
+
         let bntStartSector = header.readU32LE(at: 0x10)
         let maxBanks = Int(header.readU32LE(at: 0x14))
         let fatSectors = Int(header.readU32LE(at: 0x1C))
         let clusterAreaStartSector = header.readU32LE(at: 0x20)
-        
+
         // Read FAT (ALWAYS at 0x400, size from header)
         let fatSize = fatSectors * 512
+        guard fatSize > 0 else { throw ParseError.readError }
         try? handle.seek(toOffset: 0x400)
         guard let fatData = try? handle.read(upToCount: fatSize), fatData.count == fatSize else {
             throw ParseError.readError
@@ -282,6 +289,7 @@ enum EmaxIIParser {
         // Read BNT/catalog (offset from header[0x10], NOT hardcoded 0x1000)
         let bntOffset = UInt64(bntStartSector) * 512
         let bntSize = (Int(clusterAreaStartSector) - Int(bntStartSector)) * 512
+        guard bntSize > 0 else { throw ParseError.readError }
         try? handle.seek(toOffset: bntOffset)
         guard let catalogData = try? handle.read(upToCount: bntSize) else {
             throw ParseError.readError
