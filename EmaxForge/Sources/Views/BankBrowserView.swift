@@ -200,7 +200,7 @@ struct BankBrowserView: View {
                     guard let bank = selectedBank, let fs = fileSystem else { return }
                     Task {
                         do {
-                            try PCMReallocator.replaceSamplePCM(
+                            _ = try PCMReallocator.replaceSamplePCM(
                                 bankEntry: bank,
                                 sampleIndex: sample.index,
                                 newPCM: editedPCM,

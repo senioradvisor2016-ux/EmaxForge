@@ -604,7 +604,10 @@ class SampleExporter {
                 pcmData: sample.pcmData,
                 sampleRate: Double(sample.sampleRate),
                 to: outputURL,
-                format: internalFormat
+                format: internalFormat,
+                loopStart: sample.loopStart,
+                loopEnd: sample.loopEnd,
+                rootKey: sample.rootKey
             )
 
             results.append(ExportedSample(
