@@ -105,24 +105,51 @@ struct PresetAnalyzer {
                 .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? "Preset \(i+1)"
             
             if name.isEmpty { continue }
-            
-            // Parse voice count and key ranges (simplified)
-            let voiceCount = Int(bankData[offset + 0x20]) // Approximate
-            let keyLow = Int(bankData[offset + 0x30])
-            let keyHigh = Int(bankData[offset + 0x31])
-            
-            // TODO: Parse actual voice/zone structure for accurate sample mapping
-            let usedSamples = sampleNames.prefix(min(voiceCount, sampleNames.count)).map { $0 }
-            
+
+            // Parse zone count (exact field at +0x23) and key map (+0x24, 88 bytes).
+            // keyMap[i] = sample index for MIDI key (21+i), or 0xFF = unassigned.
+            // zoneCount = number of unique assigned sample indices.
+            let zoneCountOffset = 0x23
+            let keyMapOffset    = 0x24
+            let keyMapLength    = 88
+            let keyMapMidiBase  = 21
+
+            let zoneCount = offset + zoneCountOffset < bankData.count
+                ? Int(bankData[offset + zoneCountOffset]) : 0
+
+            var sampleIndices = [Int]()
+            var firstAssignedKey = -1
+            var lastAssignedKey  = -1
+            let keyMapStart = offset + keyMapOffset
+            if keyMapStart + keyMapLength <= bankData.count {
+                for k in 0..<keyMapLength {
+                    let idx = Int(bankData[keyMapStart + k])
+                    if idx != 0xFF {
+                        if firstAssignedKey < 0 { firstAssignedKey = keyMapMidiBase + k }
+                        lastAssignedKey = keyMapMidiBase + k
+                        if !sampleIndices.contains(idx) { sampleIndices.append(idx) }
+                    }
+                }
+            }
+
+            // Resolve sample names by index
+            let usedSamples: [String] = sampleIndices.compactMap { idx in
+                guard idx < sampleNames.count else { return nil }
+                return sampleNames[idx]
+            }
+
+            let keyLow  = firstAssignedKey >= 0 ? firstAssignedKey : 0
+            let keyHigh = lastAssignedKey  >= 0 ? lastAssignedKey  : 127
+
             let info = PresetInfo(
                 name: name,
                 bankName: bank.name,
                 presetIndex: i,
-                voiceCount: max(1, voiceCount),
-                samples: Array(usedSamples),
-                keyRangeLow: max(0, min(127, keyLow)),
-                keyRangeHigh: max(0, min(127, keyHigh)),
-                velocityLayers: 1 // Simplified
+                voiceCount: max(1, zoneCount),
+                samples: usedSamples,
+                keyRangeLow: keyLow,
+                keyRangeHigh: keyHigh,
+                velocityLayers: 1
             )
             
             presets.append(info)

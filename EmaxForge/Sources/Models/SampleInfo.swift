@@ -105,17 +105,18 @@ struct SampleAnalyzer {
             return []
         }
         
-        // Parse bank to get preset info (for "used by" tracking)
-        // TODO: Use bankInfo for proper preset→sample mapping once zone structure is implemented
-        _ = EmaxIIParser.parseBankData(bankData)
-        let presetNames = extractPresetNames(from: bankData)
-        
+        // Build preset→sample mapping using the key map (+0x24, 88 bytes).
+        // keyMap[i] = sample index for MIDI key (21+i), or 0xFF = unassigned.
+        let presetToSampleIndices = extractPresetSampleIndices(from: bankData)
+
         // Build sample info list
         var samples: [SampleInfo] = []
-        
+
         for sample in sampleData.samples {
-            // Find which presets use this sample
-            let usedBy = presetNames // TODO: Implement proper preset->sample mapping
+            // Find which presets reference this sample index
+            let usedBy = presetToSampleIndices
+                .filter { $0.value.contains(sample.index) }
+                .map { $0.key }
             
             let info = SampleInfo(
                 name: sample.name,
@@ -138,28 +139,44 @@ struct SampleAnalyzer {
         return samples
     }
     
-    /// Extract preset names from bank data
-    private func extractPresetNames(from data: Data) -> [String] {
-        var names: [String] = []
-        
-        // Preset area starts at 0x200, 256 presets × 256 bytes
-        let presetBase = 0x200
-        let presetSize = 0x100
-        
+    /// Build a mapping [presetName → Set<sampleIndex>] by reading each preset's
+    /// key map (+0x24, 88 bytes). keyMap[i] = sample index for MIDI key (21+i),
+    /// or 0xFF = unassigned. This is the canonical way to determine which samples
+    /// a preset uses (verified against VoiceZoneEditor, EmaxIIFormat constants).
+    private func extractPresetSampleIndices(from data: Data) -> [String: Set<Int>] {
+        var result = [String: Set<Int>]()
+
+        let presetBase   = EmaxIIFormat.presetAreaOffset  // 0x200
+        let presetSize   = EmaxIIFormat.presetSize        // 0x100
+        let keyMapOffset = 0x24
+        let keyMapLength = 88
+
         for i in 0..<256 {
-            let offset = presetBase + i * presetSize
-            guard offset + 16 <= data.count else { break }
-            
-            let nameData = data[offset..<offset+16]
+            let blockBase = presetBase + i * presetSize
+            guard blockBase + presetSize <= data.count else { break }
+
+            // Preset name at +0x00 (16 bytes)
+            let nameData = data[blockBase..<(blockBase + 16)]
             let name = String(data: nameData, encoding: .ascii)?
-                .trimmingCharacters(in: .init(charactersIn: "\0 "))
-            
-            if let name = name, !name.isEmpty {
-                names.append(name)
+                .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
+            guard !name.isEmpty else { continue }
+
+            // Key map at +0x24: 88 bytes, each = sample index or 0xFF
+            let kmStart = blockBase + keyMapOffset
+            guard kmStart + keyMapLength <= data.count else { continue }
+
+            var indices = Set<Int>()
+            for k in 0..<keyMapLength {
+                let idx = Int(data[kmStart + k])
+                if idx != 0xFF { indices.insert(idx) }
+            }
+
+            if !indices.isEmpty {
+                result[name] = indices
             }
         }
-        
-        return names
+
+        return result
     }
     
     // MARK: - Errors
