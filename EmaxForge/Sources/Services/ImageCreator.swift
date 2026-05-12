@@ -257,13 +257,16 @@ class ImageCreator {
         handle.write(cleanBNT)
 
         // Build clean FAT: reserved + full OS cluster chain + zero for user banks.
-        // BNT slot 0 uses startCluster=0x7800 (OS special marker) at offset 16 — NOT a real cluster.
+        // BNT slot 0 uses bankIndex=0x7800 (OS special marker) at offset 16 (+0x10).
         // The OS is always physically at cluster 1 (0-based: caOffset + 1*clusterSize).
-        // osClusterCount from BNT offset 18 (clusterCount field per EmaxIIFileSystem.swift layout).
+        // OS startCluster from BNT offset 18 (+0x12); for the OS this equals 1.
         var cleanFAT = Data(count: fatSize)
         cleanFAT.writeU16LE(0x8000, at: 0)  // FAT[0] reserved
         let osStartCluster = 1              // OS always starts at cluster 1
-        let osClusterCount = Int(cleanBNT.readU16LE(at: 18))   // +0x12 = clusterCount
+        // NOTE: offset 18 (+0x12) is startCluster for the OS (always 1). We read it here as
+        // the initial FAT chain length; for single-cluster OS images this happens to be correct.
+        // For multi-cluster OS images, OSManager.updateOS re-writes the FAT chain from actual data.
+        let osClusterCount = Int(cleanBNT.readU16LE(at: 18))   // +0x12 = OS startCluster (== 1)
         if osClusterCount > 0 {
             // Build OS FAT chain: start → start+1 → ... → start+count-1 → 0x7FFF
             for i in 0..<osClusterCount {

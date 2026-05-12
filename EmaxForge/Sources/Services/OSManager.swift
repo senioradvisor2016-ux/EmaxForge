@@ -6,8 +6,8 @@ import Foundation
 ///   BNT: at sector header[0x10]*512 (32-byte entries)
 ///   FAT: ALWAYS at 0x400
 ///   Clusters: 0-based — cluster n = CA offset + n * clusterSize
-///   OS entry: BNT slot 0, startCluster=0x7800 (special marker), OS data at cluster 1
-///   BNT layout: +0x10=startCluster, +0x12=clusterCount, +0x14=numPresets, +0x1A=flags
+///   OS entry: BNT slot 0, bankIndex=0x7800 (special marker at +0x10), OS data at cluster 1
+///   BNT layout: +0x10=bankIndex, +0x12=startCluster, +0x14=numPresets, +0x1A=flags
 class OSManager {
     
     enum OSError: Error, LocalizedError {
@@ -108,8 +108,8 @@ class OSManager {
                 .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
 
             if name.contains("EMAX2") || name.contains("Software") {
-                // OS BNT entry: startCluster = 0x7800 (special marker — not a real cluster).
-                // OS data is always at cluster 1 (0-based). Read clusterCount from +0x12.
+                // OS BNT entry: bankIndex = 0x7800 (special marker at +0x10).
+                // OS data is always at cluster 1 (0-based). startCluster at +0x12 = 1.
                 osCluster = 1
                 osClusters = Int(entry.readU16LE(at: 18))  // +0x12 = clusterCount
                 if osClusters == 0 { osClusters = 1 }
@@ -219,17 +219,17 @@ class OSManager {
             entry.replaceSubrange(0..<16, with: padded.data(using: .ascii)!)
             
             // BNT OS entry layout verified against EmaxII-02.ez2 (slot 16):
-            //   +10..+11  startCluster = 0x7800 (OS special marker)
-            //   +12..+13  clusterCount = 0x0001
+            //   +10..+11  bankIndex    = 0x7800 (OS special marker at +0x10)
+            //   +12..+13  startCluster = 0x0001 (OS is always at cluster 1, stored at +0x12)
             //   +14..+15  numPresets   = 0x0004 (from reference)
             //   +16..+17  f22          = 0x0078 (from reference)
             //   +18..+19  idx          = 0x0200 (from reference)
             //   +1A..+1B  flags        = 0x0081 (active entry)
 
-            // startCluster = 0x7800 (OS marker)
+            // bankIndex = 0x7800 (OS marker at +0x10)
             entry[16] = 0x00; entry[17] = 0x78
-            
-            // clusterCount = 1
+
+            // startCluster = 1 (OS at cluster 1, at +0x12)
             entry[18] = 0x01; entry[19] = 0x00
             
             // numPresets = 4 (from reference disk EmaxII-02.ez2)

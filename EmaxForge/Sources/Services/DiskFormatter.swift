@@ -231,8 +231,8 @@ class DiskFormatter {
         if osData != nil {
             // Entry 0: OS — BNT layout per EmaxIIFileSystem.swift (verified May 2026):
             //   [0-15]:  name (16 bytes)
-            //   [16-17]: startCluster = 0x7800 (OS special marker — not a real cluster number)
-            //   [18-19]: clusterCount = 1 (OS occupies 1 cluster)
+            //   [16-17]: bankIndex = 0x7800 (OS special marker at +0x10)
+            //   [18-19]: startCluster = 1 (OS is always at cluster 1, stored at +0x12)
             //   [20-21]: numPresets = 1 (from reference disks)
             //   [26-27]: flags = 0x0080 (EMXP standard for OS entry)
             let osName = "EMAX2 Software\0\0".data(using: .ascii)!  // 16 bytes

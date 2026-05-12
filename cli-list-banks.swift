@@ -139,11 +139,12 @@ func listBanks(diskURL: URL) throws -> [BankEntry] {
             .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
         guard !name.isEmpty else { continue }
 
-        let startCluster = Int(catalogData.readU16LE(at: base + 16))
+        let bankIdx      = Int(catalogData.readU16LE(at: base + 16))  // +0x10: bankIndex (0x7800=OS)
+        let startCluster = Int(catalogData.readU16LE(at: base + 18))  // +0x12: actual FAT start cluster
         let flags        = catalogData.readU16LE(at: base + 26)
 
         // 0x7800 = OS/boot entry marker — skip it
-        if startCluster == 0x7800 { continue }
+        if bankIdx == 0x7800 { continue }
 
         // Valid bank entry
         if flags == 0x0081 {

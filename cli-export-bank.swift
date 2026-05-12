@@ -160,11 +160,12 @@ func parseBanks(diskURL: URL) throws -> (banks: [BankEntry], clusterSize: Int, c
             .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
         guard !name.isEmpty else { continue }
 
-        let startCluster = catalogData.readU16LE(at: base + 16)  // +10
+        let bankIdx      = catalogData.readU16LE(at: base + 16)  // +0x10: bankIndex (0x7800=OS)
+        let startCluster = catalogData.readU16LE(at: base + 18)  // +0x12: actual FAT start cluster
         let flags        = catalogData.readU16LE(at: base + 26)  // +1A
 
         // 0x7800 = OS/boot entry — skip
-        if startCluster == 0x7800 { continue }
+        if bankIdx == 0x7800 { continue }
         guard flags == 0x0081 else { continue }
 
         banks.append(BankEntry(name: name, cluster: startCluster, index: banks.count + 1))

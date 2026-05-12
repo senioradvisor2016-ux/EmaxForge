@@ -191,10 +191,11 @@ func validateDisk(_ url: URL) throws -> [ValidationIssue] {
             .trimmingCharacters(in: .init(charactersIn: "\0 ")) ?? ""
         guard !name.isEmpty else { continue }
 
-        let startCluster = catalogData.readU16LE(at: base + 16)
-        let flags        = catalogData.readU16LE(at: base + 26)
+        let bankIdx  = catalogData.readU16LE(at: base + 16)  // +0x10: bankIndex (0x7800=OS)
+        let flags    = catalogData.readU16LE(at: base + 26)
 
-        if startCluster != 0x7800 && flags != 0x0081 {
+        // A non-OS entry must have valid flags
+        if bankIdx != 0x7800 && flags != 0x0081 {
             issues.append(.corruptBank(name: name))
         }
         validEntries += 1

@@ -676,7 +676,7 @@ struct BankBrowserView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
-                    // OS entry (startCluster == 0x7800) is already excluded by userBanks;
+                    // OS entry (bankIndex == 0x7800) is already excluded by userBanks;
                     // no additional guard needed here.
                 }
                 
