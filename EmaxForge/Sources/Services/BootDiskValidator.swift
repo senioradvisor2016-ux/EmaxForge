@@ -112,7 +112,10 @@ public struct BootDiskValidator {
         if headerData.count >= 0x28 {
             let cs = Int(headerData.readU32LE(at: 0x04))
             let cas = Int(headerData.readU32LE(at: 0x20))
-            clusterSize = cs > 0 && cs < 0x100_000 ? cs : 16384
+            // Upper bound must be ≥ 962 MB cluster size (1969408); all services use 4_194_304.
+            // Do NOT use 0x100_000 (1048576) — that rejects 962 MB clusters and falls through
+            // to the 16384 fallback, which computes a completely wrong OS offset.
+            clusterSize = cs > 0 && cs <= 4_194_304 ? cs : 16384
             clusterAreaStartSector = cas > 0 ? cas : 512
         } else {
             clusterSize = 16384

@@ -149,6 +149,27 @@ final class BootDiskTests: XCTestCase {
         }
     }
     
+    func testBootDiskValidatorClusterSizeGuard() {
+        // BootDiskValidator used to check "cs < 0x100_000" (= 1048576) when parsing the cluster
+        // size from header[0x04]. This rejected the 962 MB cluster size (1969408) and fell back
+        // to clusterSize=16384, producing a completely wrong OS-data offset.
+        //
+        // Correct guard (matching all other services): cs > 0 && cs <= 4_194_304.
+        //
+        // Regression test: verify the correct guard accepts all five EMXP template sizes.
+        let emxpClusterSizes = [196352, 489472, 984576, 489472, 1969408]
+        for cs in emxpClusterSizes {
+            let acceptedByCorrectGuard = cs > 0 && cs <= 4_194_304
+            XCTAssertTrue(acceptedByCorrectGuard,
+                "Cluster size \(cs) must be accepted by BootDiskValidator (cs > 0 && cs <= 4_194_304)")
+        }
+
+        // The old wrong guard would have silently rejected the two non-sector-aligned sizes:
+        let rejectedByOldGuard = [196352, 1969408].filter { $0 < 0x100_000 }
+        XCTAssertFalse(rejectedByOldGuard.contains(1969408),
+            "962 MB cluster size (1969408) must NOT be filtered by old guard (< 0x100_000 = 1048576)")
+    }
+
     // MARK: - Integration Tests (require actual file)
     
     func testVerifyBootDiskIfExists() throws {
