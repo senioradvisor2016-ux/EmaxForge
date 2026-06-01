@@ -52,25 +52,25 @@ final class BankImportTests: XCTestCase {
         XCTAssertEqual(firstBankOffset, 0x1220)
     }
 
-    // MARK: - BNT entry field offsets (verified against EmaxIIFileSystem.swift layout)
+    // MARK: - BNT entry field offsets (verified vs BANK_HANDLING_ANALYSIS.md + analyze_image.swift)
 
     func testBNTEntryFieldOffsets() {
         // Synthetic 32-byte BNT entry for a bank "GUITAR/FLUTE" with
-        // startCluster=5, clusterCount=15, numPresets=0, f22=0x68, bankIndex=0x16.
-        // Layout per EmaxIIFileSystem.swift (the authoritative reference):
+        // bankIndex=0x0000 (first user bank), startCluster=5, numPresets=0, fieldA=0x68, fieldB=0x16.
+        // Correct layout per BANK_HANDLING_ANALYSIS.md:
         //   [0-15]:  name, ASCII, space/null padded to 16 bytes
-        //   [16-17]: startCluster (U16 LE, 0-based)
-        //   [18-19]: clusterCount (U16 LE)
+        //   [16-17]: bankIndex    (U16 LE; 0x7800=OS, (n-1)*256 for user banks)
+        //   [18-19]: startCluster (U16 LE; actual FAT cluster — what EMAX II hardware reads)
         //   [20-21]: numPresets   (U16 LE)
-        //   [22-23]: f22          (U16 LE, unknown metadata)
-        //   [24-25]: bankIndex    (U16 LE, idx/preset address)
+        //   [22-23]: fieldA       (U16 LE, unknown)
+        //   [24-25]: fieldB       (U16 LE, unknown)
         //   [26-27]: flags = 0x0081
         //   [28-31]: zeros
         let raw: [UInt8] = [
             0x47, 0x55, 0x49, 0x54, 0x41, 0x52, 0x2f, 0x46,  // "GUITAR/F"
             0x4c, 0x55, 0x54, 0x45, 0x20, 0x20, 0x00, 0x00,  // "LUTE  \0\0"
-            0x05, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x68, 0x00,  // startCluster=5, clusterCount=15, numPresets=0, f22=0x68
-            0x16, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00   // bankIndex=0x16, flags=0x0081, zeros
+            0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x68, 0x00,  // bankIndex=0x0000, startCluster=5, numPresets=0, fieldA=0x68
+            0x16, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00   // fieldB=0x16, flags=0x0081, zeros
         ]
         let entry = Data(raw)
 
@@ -82,13 +82,13 @@ final class BankImportTests: XCTestCase {
         XCTAssertEqual(entry[14], 0x00)
         XCTAssertEqual(entry[15], 0x00)
 
-        // [16-17]: startCluster = 5 (0-based cluster index, per EmaxIIFileSystem.swift +0x10)
-        let startCluster = UInt16(entry[16]) | (UInt16(entry[17]) << 8)
-        XCTAssertEqual(startCluster, 5)
+        // [16-17]: bankIndex = 0x0000 (first user bank, per BANK_HANDLING_ANALYSIS.md +0x10)
+        let bankIndex = UInt16(entry[16]) | (UInt16(entry[17]) << 8)
+        XCTAssertEqual(bankIndex, 0x0000)
 
-        // [18-19]: clusterCount = 15 (per EmaxIIFileSystem.swift +0x12)
-        let clusterCount = UInt16(entry[18]) | (UInt16(entry[19]) << 8)
-        XCTAssertEqual(clusterCount, 15)
+        // [18-19]: startCluster = 5 (actual FAT cluster, per BANK_HANDLING_ANALYSIS.md +0x12)
+        let startCluster = UInt16(entry[18]) | (UInt16(entry[19]) << 8)
+        XCTAssertEqual(startCluster, 5)
 
         // [20-21]: numPresets = 0 (set to 0 on import; EMAX II updates at load time)
         let numPresets = UInt16(entry[20]) | (UInt16(entry[21]) << 8)
@@ -226,7 +226,8 @@ final class BankImportTests: XCTestCase {
         // Result.catalogIndex is the BNT slot, not the cluster. We need the cluster from BNT.
         let bntStartSector = 8  // from makeMinimalEMX2Disk
         let bntEntryOffset = bntStartSector * 512 + result.catalogIndex * 32
-        let startCluster = Int(diskData.readU16LEat(bntEntryOffset + 16))
+        // BNT layout: bankIndex at offset 16, startCluster at offset 18 (BANK_HANDLING_ANALYSIS.md)
+        let startCluster = Int(diskData.readU16LEat(bntEntryOffset + 18))
         let fatEntry = diskData.readU16LEat(fatOffset + startCluster * 2)
         XCTAssertEqual(fatEntry, 0x7FFF, "Imported bank FAT EOC must be 0x7FFF (standard), got 0x\(String(fatEntry, radix: 16))")
     }
@@ -310,9 +311,9 @@ final class BankImportTests: XCTestCase {
         let bntOff = bntSector * 512
         let osName = Array("EMAX2 Software\0\0".utf8)
         for (i, b) in osName.enumerated() { disk[bntOff + i] = b }
-        disk[bntOff + 16] = 0x00; disk[bntOff + 17] = 0x78  // startCluster = 0x7800
-        disk[bntOff + 18] = 1;    disk[bntOff + 19] = 0      // clusterCount = 1
-        disk[bntOff + 26] = 0x80; disk[bntOff + 27] = 0x00  // flags = 0x0080
+        disk[bntOff + 16] = 0x00; disk[bntOff + 17] = 0x78  // bankIndex = 0x7800 (OS marker)
+        disk[bntOff + 18] = 1;    disk[bntOff + 19] = 0      // startCluster = 1 (OS at cluster 1)
+        disk[bntOff + 26] = 0x80; disk[bntOff + 27] = 0x00  // flags = 0x0080 (OS)
 
         return disk
     }
@@ -355,9 +356,9 @@ final class BankImportTests: XCTestCase {
         let bntOff = bntSector * 512
         let osName = Array("EMAX2 Software\0\0".utf8)
         for (i, b) in osName.enumerated() { disk[bntOff + i] = b }
-        disk[bntOff + 16] = 0x00; disk[bntOff + 17] = 0x78  // startCluster = 0x7800 (OS marker)
-        disk[bntOff + 18] = 1;    disk[bntOff + 19] = 0     // clusterCount = 1
-        disk[bntOff + 26] = 0x80; disk[bntOff + 27] = 0x00  // flags
+        disk[bntOff + 16] = 0x00; disk[bntOff + 17] = 0x78  // bankIndex = 0x7800 (OS marker)
+        disk[bntOff + 18] = 1;    disk[bntOff + 19] = 0     // startCluster = 1 (OS at cluster 1)
+        disk[bntOff + 26] = 0x80; disk[bntOff + 27] = 0x00  // flags = 0x0080 (OS)
         let diskURL = tmpDir.appendingPathComponent("test_96mb.hda")
         try disk.write(to: diskURL)
 
@@ -377,10 +378,11 @@ final class BankImportTests: XCTestCase {
         let fat2 = UInt16(updatedDisk[0x400 + 2*2]) | (UInt16(updatedDisk[0x400 + 2*2 + 1]) << 8)
         XCTAssertEqual(fat2, 0x7FFF, "FAT[2] should be EOC (0x7FFF) after import")
 
-        // Verify the BNT entry for the new bank has startCluster=2
+        // Verify the BNT entry for the new bank has startCluster=2 (at offset 18, not 16)
+        // BNT layout: [16-17]=bankIndex, [18-19]=startCluster (BANK_HANDLING_ANALYSIS.md)
         let bntSlot1 = bntOff + 32  // slot 1 (after OS at slot 0)
-        let startCluster = UInt16(updatedDisk[bntSlot1 + 16]) | (UInt16(updatedDisk[bntSlot1 + 17]) << 8)
-        XCTAssertEqual(startCluster, 2, "BNT slot 1 startCluster should be 2")
+        let startCluster = UInt16(updatedDisk[bntSlot1 + 18]) | (UInt16(updatedDisk[bntSlot1 + 19]) << 8)
+        XCTAssertEqual(startCluster, 2, "BNT slot 1 startCluster (offset 18) should be 2")
     }
 
     // MARK: - Synthetic bank round-trip

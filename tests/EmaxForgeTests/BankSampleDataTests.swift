@@ -26,6 +26,7 @@ final class BankSampleDataExtractionTests: XCTestCase {
         originalKey: UInt8 = 60,
         loopStart: UInt32 = 0,
         loopEnd: UInt32 = 0,
+        loopFlags: UInt8 = 0x00,   // +0x1C: bit0=sustainEnabled
         sampleName: String = "KICK",
         pcmFrames: Int = 500      // frames (each frame = 2 bytes, 16-bit)
     ) -> Data {
@@ -53,6 +54,8 @@ final class BankSampleDataExtractionTests: XCTestCase {
         buf.writeU32LE(loopStart, at: base + EmaxIIFormat.paramSustainLoopStart) // +0x0C
         // loopEnd
         buf.writeU32LE(loopEnd,   at: base + EmaxIIFormat.paramSustainLoopEnd)   // +0x10
+        // loopFlags — bit0=sustainEnabled, bit1=releaseEnabled, bit2=backward
+        buf[base + EmaxIIFormat.paramLoopFlags] = loopFlags                       // +0x1C
         // name at +0x20
         let nameData = sampleName.prefix(16).data(using: .ascii) ?? Data()
         for (i, byte) in nameData.enumerated() where i < 16 {
@@ -172,16 +175,27 @@ final class BankSampleDataExtractionTests: XCTestCase {
     // MARK: - loop point parsing
 
     func testLoopEndGreaterThanLoopStartMeansHasLoop() {
-        let buf = makeEMXBuffer(loopStart: 100, loopEnd: 400, pcmFrames: 500)
+        // loopFlags bit0 (sustainEnabled) must be set for looping to activate
+        let buf = makeEMXBuffer(loopStart: 100, loopEnd: 400, loopFlags: 0x01, pcmFrames: 500)
         guard let entry = EmaxIIParser.extractSampleData(from: buf)?.samples.first else {
             XCTFail("Expected at least one sample entry"); return
         }
-        XCTAssertNotNil(entry.loopStart, "loopStart should be set when loopEnd > loopStart")
-        XCTAssertNotNil(entry.loopEnd,   "loopEnd should be set when loopEnd > loopStart")
+        XCTAssertNotNil(entry.loopStart, "loopStart should be set when loopEnd > loopStart and sustainBit=1")
+        XCTAssertNotNil(entry.loopEnd,   "loopEnd should be set when loopEnd > loopStart and sustainBit=1")
+    }
+
+    func testLoopFlagsZeroWithValidAddressesGivesNoLoop() {
+        // Even with valid loop addresses, loopFlags=0 means no loop (sustainBit not set)
+        let buf = makeEMXBuffer(loopStart: 100, loopEnd: 400, loopFlags: 0x00, pcmFrames: 500)
+        guard let entry = EmaxIIParser.extractSampleData(from: buf)?.samples.first else {
+            XCTFail("Expected at least one sample entry"); return
+        }
+        XCTAssertNil(entry.loopStart, "loopStart should be nil when sustainBit=0 (loop disabled by flags)")
+        XCTAssertNil(entry.loopEnd,   "loopEnd should be nil when sustainBit=0 (loop disabled by flags)")
     }
 
     func testLoopEndZeroMeansNoLoop() {
-        let buf = makeEMXBuffer(loopStart: 0, loopEnd: 0)
+        let buf = makeEMXBuffer(loopStart: 0, loopEnd: 0, loopFlags: 0x00)
         guard let entry = EmaxIIParser.extractSampleData(from: buf)?.samples.first else {
             XCTFail("Expected at least one sample entry"); return
         }
